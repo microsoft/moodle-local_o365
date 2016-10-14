@@ -379,17 +379,17 @@ class coursegroups {
         $sql = 'SELECT cg.id, cg.groupid, obj.objectid, obj.moodleid
                 FROM {local_o365_objects} obj
                 INNER JOIN {local_o365_coursegroupdata} cg ON obj.moodleid = cg.courseid
-                WHERE obj.type = ? AND obj.subtype = ?  AND cg.classnotebook = 0 AND cg.groupid = 0';
+                WHERE obj.type = ? AND obj.subtype = ?  AND cg.classnotebook = ? AND cg.groupid = ?';
 
-        $params = ['group', 'course'];
+        $params = ['group', 'course', 0, 0];
         $coursegroups = $this->DB->get_recordset_sql($sql, $params);
 
         $sql = 'SELECT cg.id, cg.groupid, obj.objectid, obj.moodleid
                 FROM {local_o365_objects} obj
                 INNER JOIN {local_o365_coursegroupdata} cg ON obj.moodleid = cg.groupid
-                WHERE obj.type = ? AND obj.subtype = ?  AND cg.classnotebook = 0';
+                WHERE obj.type = ? AND obj.subtype = ?  AND cg.classnotebook = ?';
 
-        $params = ['group', 'usergroup'];
+        $params = ['group', 'usergroup', 0];
         $incourseusergroups = $this->DB->get_recordset_sql($sql, $params);
 
         $allgroups = array();

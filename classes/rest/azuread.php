@@ -477,8 +477,8 @@ class azuread extends \local_o365\rest\o365api {
                        tok.oidcuniqid as userobjectid
                   FROM {auth_oidc_token} tok
                   JOIN {user} u ON u.username = tok.username
-                 WHERE tok.resource = ? AND u.id = ? AND u.deleted = "0"';
-        $params = ['https://graph.windows.net', $userid];
+                 WHERE tok.resource = ? AND u.id = ? AND u.deleted = ?';
+        $params = ['https://graph.windows.net', $userid, 0];
         $userobject = $DB->get_record_sql($sql, $params);
         if (empty($userobject)) {
             return null;
@@ -508,8 +508,8 @@ class azuread extends \local_o365\rest\o365api {
                        tok.oidcuniqid as userobjectid
                   FROM {auth_oidc_token} tok
                   JOIN {user} u ON u.username = tok.username
-                 WHERE tok.resource = ? AND u.id = ? AND u.deleted = "0"';
-        $params = ['https://graph.windows.net', $userid];
+                 WHERE tok.resource = ? AND u.id = ? AND u.deleted = ?';
+        $params = ['https://graph.windows.net', $userid, 0];
         $userobject = $DB->get_record_sql($sql, $params);
         if (empty($userobject)) {
             return null;
