@@ -723,7 +723,9 @@ class unified extends \local_o365\rest\o365api {
         \core_date::set_default_server_timezone();
         $endpoint = (!empty($calendarid)) ? '/me/calendars/'.$calendarid.'/events' : '/me/calendar/events';
         if (!empty($since)) {
-            $since = urlencode(date(DATE_ATOM, $since));
+            // Pass datetime in UTC, regardless of Moodle timezone setting.
+            $sincedt = new \DateTime('@'.$since);
+            $since = urlencode($sincedt->format('Y-m-d\TH:i:s\Z'));
             $endpoint .= '?$filter=CreatedDateTime%20ge%20'.$since;
         }
         $response = $this->apicall('get', $endpoint);
@@ -1190,10 +1192,26 @@ class unified extends \local_o365\rest\o365api {
         foreach ($neededperms as $app => $perms) {
             $appid = $allappdata[$app]['appId'];
             $appname = $allappdata[$app]['appDisplayName'];
-            foreach ($perms as $permname => $neededtype) {
-                if (isset($allappdata[$app]['perms'][$permname])) {
-                    $permid = $allappdata[$app]['perms'][$permname]['id'];
-                    if (!isset($currentperms[$appid][$permid])) {
+            foreach ($perms as $permname => $altperms) {
+                $permids = [];
+                $permstocheck = array_merge([$permname], $altperms);
+                foreach ($permstocheck as $permtocheckname) {
+                    if (isset($allappdata[$app]['perms'][$permtocheckname])) {
+                        $permids[$permtocheckname] = $allappdata[$app]['perms'][$permtocheckname]['id'];
+                    }
+                }
+                if (empty($permids)) {
+                    // If $permids is empty no candidate permissions exist in the application.
+                    $missingperms[$appname][$permname] = $permname;
+                } else {
+                    $permsatisfied = false;
+                    foreach ($permids as $permidsname => $permidsid) {
+                        if (isset($currentperms[$appid][$permidsid])) {
+                            $permsatisfied = true;
+                            break;
+                        }
+                    }
+                    if ($permsatisfied === false) {
                         if (isset($allappdata[$app]['perms'][$permname]['adminConsentDisplayName'])) {
                             $permdesc = $allappdata[$app]['perms'][$permname]['adminConsentDisplayName'];
                         } else {
@@ -1201,21 +1219,11 @@ class unified extends \local_o365\rest\o365api {
                         }
                         $missingperms[$appname][$permname] = $permdesc;
                     }
-                } else {
-                    $missingperms[$appname][$permname] = $permname;
                 }
             }
         }
 
-        // Determine whether we have write permissions.
-        $writeappid = $allappdata['Microsoft.Azure.ActiveDirectory']['appId'];
-        $writepermid = isset($allappdata['Microsoft.Azure.ActiveDirectory']['perms']['Directory.Write']['id'])
-            ? $allappdata['Microsoft.Azure.ActiveDirectory']['perms']['Directory.Write']['id'] : null;
-        $impersonatepermid = $allappdata['Microsoft.Azure.ActiveDirectory']['perms']['user_impersonation']['id'];
-        $haswrite = (!empty($writepermid) && !empty($currentperms[$writeappid][$writepermid])) ? true : false;
-        $hasimpersonate = (!empty($currentperms[$writeappid][$impersonatepermid])) ? true : false;
-        $canfix = ($hasimpersonate === true) ? true : false;
-        return [$missingperms, $canfix];
+        return [$missingperms, false];
     }
 
     /**
