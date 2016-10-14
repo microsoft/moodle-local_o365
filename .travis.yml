@@ -26,6 +26,7 @@ before_install:
   - export PATH="$(cd ci/bin; pwd):$(cd ci/vendor/bin; pwd):$PATH"
 
 install:
+  - moodle-plugin-ci add-plugin --branch MOODLE_31_STABLE POETGroup/moodle-auth_oidc
   - moodle-plugin-ci install
 
 script:
