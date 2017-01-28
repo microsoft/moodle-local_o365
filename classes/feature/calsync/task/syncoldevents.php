@@ -340,10 +340,10 @@ class syncoldevents extends \core\task\adhoc_task {
                        idmap.origin AS idmaporigin
                   FROM {event} ev
              LEFT JOIN {local_o365_calidmap} idmap ON ev.id = idmap.eventid AND idmap.userid = ev.userid
-                 WHERE ev.courseid = 0
-                       AND ev.groupid = 0
+                 WHERE ev.courseid = ?
+                       AND ev.groupid = ?
                        AND ev.userid = ?';
-        $events = $DB->get_recordset_sql($sql, [$userid]);
+        $events = $DB->get_recordset_sql($sql, [0, 0, $userid]);
         foreach ($events as $event) {
             mtrace('Syncing user event #'.$event->eventid);
             if (!empty($subscription)) {
