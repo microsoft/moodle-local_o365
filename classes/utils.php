@@ -70,7 +70,7 @@ class utils {
      * @param string $resource The desired resource.
      * @param \local_o365\oauth2\clientdata $clientdata Client credentials.
      * @param \local_o365\httpclientinterface $httpclient An HTTP client.
-     * @return \local_o365\oauth2\apptoken|\local_o365\oauth2\systemtoken An app or system token.
+     * @return \local_o365\oauth2\apptoken|\local_o365\oauth2\systemapiusertoken An app or system token.
      */
     public static function get_app_or_system_token($resource, $clientdata, $httpclient) {
         $token = null;
@@ -84,7 +84,7 @@ class utils {
 
         if (empty($token)) {
             try {
-                $token = \local_o365\oauth2\systemtoken::instance(null, $resource, $clientdata, $httpclient);
+                $token = \local_o365\oauth2\systemapiusertoken::instance(null, $resource, $clientdata, $httpclient);
             } catch (\Exception $e) {
                 static::debug($e->getMessage(), 'get_app_or_system_token (system)', $e);
             }
@@ -98,24 +98,60 @@ class utils {
     }
 
     /**
+     * Get the tenant from an ID Token.
+     *
+     * @param \auth_oidc\jwt $idtoken The ID token.
+     * @return string|null The tenant, or null is failure.
+     */
+    public static function get_tenant_from_idtoken(\auth_oidc\jwt $idtoken) {
+        $iss = $idtoken->claim('iss');
+        $parsediss = parse_url($iss);
+        if (!empty($parsediss['path'])) {
+            $tenant = trim($parsediss['path'], '/');
+            if (!empty($tenant)) {
+                return $tenant;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Determine whether app-only access is enabled.
+     *
+     * @return bool Enabled/disabled.
+     */
+    public static function is_enabled_apponlyaccess() {
+        $apponlyenabled = get_config('local_o365', 'enableapponlyaccess');
+        return (!empty($apponlyenabled)) ? true : false;
+    }
+
+    /**
      * Determine whether the app only access is configured.
      *
      * @return bool Whether the app only access is configured.
      */
     public static function is_configured_apponlyaccess() {
         // App only access requires unified api to be enabled.
-        $apponlyenabled = get_config('local_o365', 'enableapponlyaccess');
+        $apponlyenabled = static::is_enabled_apponlyaccess();
         if (empty($apponlyenabled)) {
             return false;
         }
-        if (\local_o365\rest\unified::is_configured() !== true) {
-            return false;
-        }
         $aadtenant = get_config('local_o365', 'aadtenant');
-        if (empty($aadtenant)) {
+        $aadtenantid = get_config('local_o365', 'aadtenantid');
+        if (empty($aadtenant) && empty($aadtenantid)) {
             return false;
         }
         return true;
+    }
+
+    /**
+     * Determine whether app-only access is both configured and active.
+     *
+     * @return bool Whether app-only access is active.
+     */
+    public static function is_active_apponlyaccess() {
+        return (static::is_configured_apponlyaccess() === true && \local_o365\rest\unified::is_configured() === true)
+            ? true : false;
     }
 
     /**
@@ -267,7 +303,7 @@ class utils {
         if (!empty($userid)) {
             $token = \local_o365\oauth2\token::instance($userid, $resource, $clientdata, $httpclient);
         } else {
-            $token = \local_o365\oauth2\systemtoken::instance($userid, $resource, $clientdata, $httpclient);
+            $token = \local_o365\utils::get_app_or_system_token($resource, $clientdata, $httpclient);
         }
         if (empty($token)) {
             throw new \Exception('No token available for system user. Please run local_o365 health check.');
@@ -348,11 +384,15 @@ class utils {
         try {
             $clientdata = \local_o365\oauth2\clientdata::instance_from_oidc();
             $httpclient = new \local_o365\httpclient();
-            $discres = \local_o365\rest\discovery::get_resource();
-            $disctoken = \local_o365\oauth2\token::instance($userid, $discres, $clientdata, $httpclient);
-            if (!empty($disctoken)) {
-                $discovery = new \local_o365\rest\discovery($disctoken, $httpclient);
-                $tenant = $discovery->get_tenant();
+            $resource = (\local_o365\rest\unified::is_enabled() === true)
+                ? \local_o365\rest\unified::get_resource()
+                : \local_o365\rest\discovery::get_resource();
+            $token = \local_o365\oauth2\token::instance($userid, $resource, $clientdata, $httpclient);
+            if (!empty($token)) {
+                $apiclient = (\local_o365\rest\unified::is_enabled() === true)
+                    ? new \local_o365\rest\unified($token, $httpclient)
+                    : new \local_o365\rest\discovery($token, $httpclient);
+                $tenant = $apiclient->get_tenant();
                 $tenant = clean_param($tenant, PARAM_TEXT);
                 return ($tenant != get_config('local_o365', 'aadtenant'))
                     ? $tenant : '';
@@ -373,11 +413,15 @@ class utils {
         try {
             $clientdata = \local_o365\oauth2\clientdata::instance_from_oidc();
             $httpclient = new \local_o365\httpclient();
-            $discres = \local_o365\rest\discovery::get_resource();
-            $disctoken = \local_o365\oauth2\token::instance($userid, $discres, $clientdata, $httpclient);
-            if (!empty($disctoken)) {
-                $discovery = new \local_o365\rest\discovery($disctoken, $httpclient);
-                $tenant = $discovery->get_odburl();
+            $resource = (\local_o365\rest\unified::is_enabled() === true)
+                ? \local_o365\rest\unified::get_resource()
+                : \local_o365\rest\discovery::get_resource();
+            $token = \local_o365\oauth2\token::instance($userid, $resource, $clientdata, $httpclient);
+            if (!empty($token)) {
+                $apiclient = (\local_o365\rest\unified::is_enabled() === true)
+                    ? new \local_o365\rest\unified($token, $httpclient)
+                    : new \local_o365\rest\discovery($token, $httpclient);
+                $tenant = $apiclient->get_odburl();
                 $tenant = clean_param($tenant, PARAM_TEXT);
                 return ($tenant != get_config('local_o365', 'odburl'))
                     ? $tenant : '';

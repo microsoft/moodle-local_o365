@@ -67,6 +67,23 @@ class observers {
                 redirect(new \moodle_url('/admin/settings.php?section=local_o365'));
                 break;
 
+            case 'adminconsent':
+                // Get tenant if using app-only access.
+                if (\local_o365\utils::is_enabled_apponlyaccess() === true) {
+                    if (isset($eventdata['other']['tokenparams']['id_token'])) {
+                        $idtoken = $eventdata['other']['tokenparams']['id_token'];
+                        $idtoken = \auth_oidc\jwt::instance_from_encoded($idtoken);
+                        if (!empty($idtoken)) {
+                            $tenant = \local_o365\utils::get_tenant_from_idtoken($idtoken);
+                            if (!empty($tenant)) {
+                                set_config('aadtenantid', $tenant, 'local_o365');
+                            }
+                        }
+                    }
+                }
+                redirect(new \moodle_url('/admin/settings.php?section=local_o365'));
+                break;
+
             case 'addtenant':
                 $clientdata = \local_o365\oauth2\clientdata::instance_from_oidc();
                 $httpclient = new \local_o365\httpclient();
@@ -76,10 +93,14 @@ class observers {
                 $scope = $eventdata['other']['tokenparams']['scope'];
                 $res = $eventdata['other']['tokenparams']['resource'];
                 $token = new \local_o365\oauth2\token($token, $expiry, $rtoken, $scope, $res, null, $clientdata, $httpclient);
-                $discres = \local_o365\rest\discovery::get_resource();
-                $disctoken = \local_o365\oauth2\token::jump_resource($token, $discres, $clientdata, $httpclient);
-                $discovery = new \local_o365\rest\discovery($disctoken, $httpclient);
-                $tenant = $discovery->get_tenant();
+                $resource = (\local_o365\rest\unified::is_enabled() === true)
+                    ? \local_o365\rest\unified::get_resource()
+                    : \local_o365\rest\discovery::get_resource();
+                $token = \local_o365\oauth2\token::jump_resource($token, $resource, $clientdata, $httpclient);
+                $apiclient = (\local_o365\rest\unified::is_enabled() === true)
+                    ? new \local_o365\rest\unified($token, $httpclient)
+                    : new \local_o365\rest\discovery($token, $httpclient);
+                $tenant = $apiclient->get_tenant();
                 $tenant = clean_param($tenant, PARAM_TEXT);
                 \local_o365\utils::enableadditionaltenant($tenant);
                 redirect(new \moodle_url('/local/o365/acp.php?mode=tenants'));
@@ -268,8 +289,6 @@ class observers {
 
             // Extract basic information from the IDToken.
             $updateduser = new \stdClass;
-            $updateduser->lang = 'en';
-            $updateduser->idnumber = '';
             $firstname = $idtoken->claim('given_name');
             if (!empty($firstname)) {
                 $updateduser->firstname = $firstname;
@@ -415,7 +434,7 @@ class observers {
             if (!empty($spresource)) {
                 $httpclient = new \local_o365\httpclient();
                 $clientdata = \local_o365\oauth2\clientdata::instance_from_oidc();
-                $sptoken = \local_o365\oauth2\systemtoken::instance(null, $spresource, $clientdata, $httpclient);
+                $sptoken = \local_o365\utils::get_app_or_system_token($spresource, $clientdata, $httpclient);
                 if (!empty($sptoken)) {
                     $sharepoint = new \local_o365\rest\sharepoint($sptoken, $httpclient);
                     return $sharepoint;

@@ -47,7 +47,7 @@ class main {
 
         if ($uselegacy === true) {
             $resource = \local_o365\rest\azuread::get_resource();
-            $token = \local_o365\oauth2\systemtoken::instance(null, $resource, $this->clientdata, $this->httpclient);
+            $token = \local_o365\oauth2\systemapiusertoken::instance(null, $resource, $this->clientdata, $this->httpclient);
         } else {
             $resource = \local_o365\rest\unified::get_resource();
             $token = \local_o365\utils::get_app_or_system_token($resource, $this->clientdata, $this->httpclient);
@@ -82,7 +82,9 @@ class main {
 
         $token = \local_o365\oauth2\token::instance($muserid, $resource, $this->clientdata, $this->httpclient);
         if (empty($token) && $systemfallback === true) {
-            $token = \local_o365\oauth2\systemtoken::instance(null, $resource, $this->clientdata, $this->httpclient);
+            $token = ($unifiedconfigured === true)
+                ? \local_o365\utils::get_app_or_system_token($resource, $this->clientdata, $this->httpclient)
+                : \local_o365\oauth2\systemapiusertoken::instance(null, $resource, $this->clientdata, $this->httpclient);
         }
         if (empty($token)) {
             throw new \Exception('No token available for user #'.$muserid);
@@ -301,7 +303,7 @@ class main {
                 $httpclient = new \local_o365\httpclient();
                 $clientdata = \local_o365\oauth2\clientdata::instance_from_oidc();
                 $resource = \local_o365\rest\unified::get_resource();
-                $token = \local_o365\oauth2\systemtoken::instance(null, $resource, $clientdata, $httpclient);
+                $token = \local_o365\utils::get_app_or_system_token($resource, $clientdata, $httpclient);
                 $apiclient = new \local_o365\rest\unified($token, $httpclient);
             } catch (\Exception $e) {
                 \local_o365\utils::debug('Could not construct graph api', 'check_usercreationrestriction', $e);
@@ -380,7 +382,9 @@ class main {
         $newuser = static::apply_configured_fieldmap($aaddata, $newuser, 'create');
 
         $password = null;
-        $newuser->idnumber = $newuser->username;
+        if (!isset($newuser->idnumber)) {
+            $newuser->idnumber = $newuser->username;
+        }
 
         if (!empty($newuser->email)) {
             if (email_is_not_allowed($newuser->email)) {
@@ -452,6 +456,10 @@ class main {
 
         $aadsync = get_config('local_o365', 'aadsync');
         $photoexpire = get_config('local_o365', 'photoexpire');
+        if (empty($photoexpire) || !is_numeric($photoexpire)) {
+            $photoexpire = 24;
+        }
+        $photoexpiresec = $photoexpire * 3600;
         $aadsync = array_flip(explode(',', $aadsync));
         $switchauthminupnsplit0 = get_config('local_o365', 'switchauthminupnsplit0');
         if (empty($switchauthminupnsplit0)) {
@@ -629,13 +637,15 @@ class main {
                         $this->mtrace('Could not assign user "'.$user['userPrincipalName'].'" Reason: '.$e->getMessage());
                     }
                 }
-                if (isset($aadsync['photosync']) && (empty($existinguser->photoupdated) || ($existinguser->photoupdated + $photoexpire * 3600) < time())) {
-                    try {
-                        if (!PHPUNIT_TEST) {
-                            $this->assign_photo($existinguser->muserid, $user['upnlower']);
+                if (isset($aadsync['photosync'])) {
+                    if (empty($existinguser->photoupdated) || ($existinguser->photoupdated + $photoexpiresec) < time()) {
+                        try {
+                            if (!PHPUNIT_TEST) {
+                                $this->assign_photo($existinguser->muserid, $user['upnlower']);
+                            }
+                        } catch (\Exception $e) {
+                            $this->mtrace('Could not assign profile photo to user "'.$user['userPrincipalName'].'" Reason: '.$e->getMessage());
                         }
-                    } catch (\Exception $e) {
-                        $this->mtrace('Could not assign profile photo to user "'.$user['userPrincipalName'].'" Reason: '.$e->getMessage());
                     }
                 }
 
@@ -654,10 +664,10 @@ class main {
                         // Do not switch Moodle user to OpenID if another Moodle user is already using same Office 365 account for logging in.
                         $sql = 'SELECT u.username
                                   FROM {user} u
-                             LEFT JOIN {local_o365_objects} obj ON obj.type="user" AND obj.moodleid = u.id
+                             LEFT JOIN {local_o365_objects} obj ON obj.type = ? AND obj.moodleid = u.id
                              WHERE obj.o365name = ?
                                AND u.username != ?';
-                        $params = [$user['upnlower'], $existinguser->username];
+                        $params = ['user', $user['upnlower'], $existinguser->username];
                         $alreadylinkedusername = $DB->get_field_sql($sql, $params);
 
                         if ($alreadylinkedusername !== false) {

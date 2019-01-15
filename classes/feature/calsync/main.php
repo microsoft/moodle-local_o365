@@ -48,7 +48,7 @@ class main {
 
         $token = \local_o365\oauth2\token::instance($muserid, $resource, $this->clientdata, $this->httpclient);
         if (empty($token) && $systemfallback === true) {
-            $token = \local_o365\oauth2\systemtoken::instance(null, $resource, $this->clientdata, $this->httpclient);
+            $token = \local_o365\utils::get_app_or_system_token($resource, $this->clientdata, $this->httpclient);
         }
         if (empty($token)) {
             throw new \Exception('No token available for user #'.$muserid);
@@ -69,8 +69,10 @@ class main {
      * @return \local_o365\oauth2\token|null Either a token for calendar syncing, or null if no token could be retrieved.
      */
     public function get_user_token($muserid) {
-        $outlookresource = \local_o365\rest\calendar::get_resource();
-        $usertoken = \local_o365\oauth2\token::instance($muserid, $outlookresource, $this->clientdata, $this->httpclient);
+        $resource = (\local_o365\rest\unified::is_configured() === true)
+            ? \local_o365\rest\unified::get_resource()
+            : \local_o365\rest\calendar::get_resource();
+        $usertoken = \local_o365\oauth2\token::instance($muserid, $resource, $this->clientdata, $this->httpclient);
         return (!empty($usertoken)) ? $usertoken : null;
     }
 
