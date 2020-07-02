@@ -216,6 +216,10 @@ if ($hassiteconfig) {
         $desc = new lang_string('settings_secthead_coursesync_desc', 'local_o365');
         $settings->add(new admin_setting_heading('local_o365_section_coursesync', $label, $desc));
 
+        $label = new lang_string('settings_teamsprefix', 'local_o365');
+        $desc = new lang_string('settings_teamsprefix_desc', 'local_o365');
+        $settings->add(new admin_setting_configtext('local_o365/teamsprefix', $label, $desc, '', PARAM_TEXT));
+
         $label = new lang_string('settings_usergroups', 'local_o365');
         $desc = new lang_string('settings_usergroups_details', 'local_o365');
         $settings->add(new \local_o365\adminsetting\usergroups('local_o365/createteams', $label, $desc, 'off'));
