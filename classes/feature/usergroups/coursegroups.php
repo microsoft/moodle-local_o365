@@ -61,7 +61,7 @@ class coursegroups {
      */
     public function create_groups_for_new_courses() {
         $this->replace_group_notebook_job();
-        $groupprefix = '';
+        $groupprefix = get_config('local_o365', 'teamsprefix');
 
         $createteams = get_config('local_o365', 'createteams');
         if ($createteams === 'onall' || $createteams === 'oncustom') {
@@ -248,7 +248,7 @@ class coursegroups {
         $now = time();
         $groupname = $course->fullname;
         if (!empty($groupprefix)) {
-            $groupname = $groupprefix.': '.$groupname;
+            $groupname = $groupprefix . $groupname;
         }
 
         $groupshortname = $course->shortname;
@@ -302,7 +302,7 @@ class coursegroups {
         $now = time();
         $displayname = $course->fullname;
         if (!empty($groupprefix)) {
-            $displayname = $groupprefix . ': ' . $displayname;
+            $displayname = $groupprefix . $displayname;
         }
 
         $description = $course->summary;
