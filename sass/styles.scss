@@ -5,12 +5,14 @@
     img {
         margin-right: 0.25rem;
     }
-    span, a {
+    span,
+    a {
         vertical-align: middle;
     }
 }
 
-.local_o365_adminsetting_sharepointlink_message, .local_o365_adminsetting_sharepointlink_status {
+.local_o365_adminsetting_sharepointlink_message,
+.local_o365_adminsetting_sharepointlink_status {
     margin: 0 0 0.5rem 0;
     padding: 0.5rem;
     img {
@@ -77,8 +79,9 @@
         margin-right: 16rem;
         > div {
             margin-bottom: 1rem;
-            a, b {
-                background-position: 2px 0px;
+            a,
+            b {
+                background-position: 2px 0;
                 background-size: 28px;
                 background-repeat: no-repeat;
                 background-color: transparent;
@@ -87,14 +90,17 @@
             }
         }
         .local_o365_feature_connection {
-            a, b {
+            a,
+            b {
                 background-image: url([[pix:local_o365|o365color]]);
             }
         }
-        .local_o365_feature_calendar a, .local_o365_feature_calendar b {
+        .local_o365_feature_calendar a,
+        .local_o365_feature_calendar b {
             background-image: url([[pix:local_o365|outlookcolor]]);
         }
-        .local_o365_feature_onenote a, .local_o365_feature_onenote b {
+        .local_o365_feature_onenote a,
+        .local_o365_feature_onenote b {
             background-image: url([[pix:local_o365|onenotecolor]]);
         }
     }
@@ -141,7 +147,8 @@
 
 table.local_o365_matchqueue {
     width: 100%;
-    td, th {
+    td,
+    th {
         padding: 0.25rem 0.5rem;
         vertical-align: top;
         &:first-child {
