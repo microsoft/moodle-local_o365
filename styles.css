@@ -6,19 +6,23 @@
     margin-right: 0.25rem;
 }
 
+/* stylelint-disable-next-line selector-list-comma-newline-after */
 .local_o365_statusmessage span, .local_o365_statusmessage a {
     vertical-align: middle;
 }
 
+/* stylelint-disable-next-line selector-list-comma-newline-after */
 .local_o365_adminsetting_sharepointlink_message, .local_o365_adminsetting_sharepointlink_status {
     margin: 0 0 0.5rem 0;
     padding: 0.5rem;
 }
 
+/* stylelint-disable-next-line selector-list-comma-newline-after */
 .local_o365_adminsetting_sharepointlink_message img, .local_o365_adminsetting_sharepointlink_status img {
     margin-right: 0.25rem;
 }
 
+/* stylelint-disable-next-line selector-list-comma-newline-after */
 .local_o365_adminsetting_sharepointlink_message span, .local_o365_adminsetting_sharepointlink_status span {
     vertical-align: middle;
 }
@@ -84,8 +88,9 @@
     margin-bottom: 1rem;
 }
 
+/* stylelint-disable-next-line selector-list-comma-newline-after */
 .local_o365_ucp_index .local_o365_features > div a, .local_o365_ucp_index .local_o365_features > div b {
-    background-position: 2px 0px;
+    background-position: 2px 0;
     background-size: 28px;
     background-repeat: no-repeat;
     background-color: transparent;
@@ -93,14 +98,17 @@
     padding: 4px 4px 4px 40px;
 }
 
+/* stylelint-disable-next-line  max-line-length, selector-list-comma-newline-after */
 .local_o365_ucp_index .local_o365_features .local_o365_feature_connection a, .local_o365_ucp_index .local_o365_features .local_o365_feature_connection b {
     background-image: url([[pix:local_o365|o365color]]);
 }
 
+/* stylelint-disable-next-line max-line-length, selector-list-comma-newline-after */
 .local_o365_ucp_index .local_o365_features .local_o365_feature_calendar a, .local_o365_ucp_index .local_o365_features .local_o365_feature_calendar b {
     background-image: url([[pix:local_o365|outlookcolor]]);
 }
 
+/* stylelint-disable-next-line  max-line-length, selector-list-comma-newline-after */
 .local_o365_ucp_index .local_o365_features .local_o365_feature_onenote a, .local_o365_ucp_index .local_o365_features .local_o365_feature_onenote b {
     background-image: url([[pix:local_o365|onenotecolor]]);
 }
@@ -150,11 +158,13 @@ table.local_o365_matchqueue {
     width: 100%;
 }
 
+/* stylelint-disable-next-line  selector-list-comma-newline-after */
 table.local_o365_matchqueue td, table.local_o365_matchqueue th {
     padding: 0.25rem 0.5rem;
     vertical-align: top;
 }
 
+/* stylelint-disable-next-line  selector-list-comma-newline-after */
 table.local_o365_matchqueue td:first-child, table.local_o365_matchqueue th:first-child {
     width: 1.5rem;
     text-align: center;
@@ -177,8 +187,8 @@ select#id_local_o365_teams_course select::-webkit-scrollbar {
 }
 
 select#id_local_o365_teams_course::-webkit-scrollbar-track {
-    box-shadow: inset 0 0 0px grey;
-    border-radius: 0px;
+    box-shadow: inset 0 0 0 grey;
+    border-radius: 0;
 }
 
 select#id_local_o365_teams_course::-webkit-scrollbar-thumb {
@@ -210,7 +220,9 @@ select#id_local_o365_teams_course {
 }
 
 select#id_local_o365_teams_course:focus {
-    outline-offset: 0px !important;
+    /* stylelint-disable-next-line  declaration-no-important */
+    outline-offset: 0 !important;
+    /* stylelint-disable-next-line  declaration-no-important */
     outline: none !important;
 }
 
@@ -232,7 +244,7 @@ form#local_o365_course_list {
 /* Teams tab page. */
 #id_local_o365_teams_tab_name {
     background-color: #f0f2f4;
-    border: 0px;
+    border: 0;
     padding: 8px 8px 8px 12px;
     width: 100%;
     margin-bottom: 20px;
@@ -253,6 +265,7 @@ div.local_o365_manual_login {
 }
 
 button.local_o365_manual_login_button {
+    /* stylelint-disable-next-line  declaration-no-important */
     font-family: "Segoe UI", "Helvetica Neue", "Apple Color Emoji", "Segoe UI Emoji", Helvetica, Arial, sans-serif !important;
     display: block;
     width: 200px;
@@ -266,8 +279,11 @@ button.local_o365_manual_login_button {
     min-width: 6rem;
     padding: 0.25rem;
     white-space: nowrap;
+    /* stylelint-disable-next-line  declaration-no-important */
     -webkit-box-shadow: unset !important;
+    /* stylelint-disable-next-line  declaration-no-important */
     box-shadow: unset !important;
+    /* stylelint-disable-next-line  color-hex-case */
     color: #FFF;
     margin: 5px;
 }
@@ -278,13 +294,17 @@ button.local_o365_manual_login_button:not(:disabled):not(.disabled):active {
     color: #201f1f;
 }
 
+/* stylelint-disable-next-line  selector-list-comma-newline-after */
 button.local_o365_manual_login_button:hover, button.local_o365_manual_login_button.enabled {
     background: #464775;
     border-color: transparent;
+    /* stylelint-disable-next-line  color-hex-case */
     color: #FFF;
 }
 
+/* stylelint-disable-next-line  selector-list-comma-newline-after */
 button.local_o365_manual_login_button:focus, button.local_o365_manual_login_button:focus:enabled {
+    /* stylelint-disable-next-line  block-no-empty */
 }
 
 .local_o365_acp_option {
@@ -293,16 +313,16 @@ button.local_o365_manual_login_button:focus, button.local_o365_manual_login_butt
 }
 
 .local_o365_settings_manifest_container {
-    margin: 40px 0px 20px 0px;
+    margin: 40px 0 20px 0;
 }
 
 .local_o365_settings_teams_banner_part_1 {
-    margin: 30px 40px 0px 40px;
+    margin: 30px 40px 0 40px;
     text-align: center;
 }
 
 .local_o365_settings_teams_banner_part_2 {
-    margin: 0px 40px 10px 40px;
+    margin: 0 40px 10px 40px;
 }
 
 .local_o365_settings_teams_app_img {
@@ -325,7 +345,7 @@ button.local_o365_manual_login_button:focus, button.local_o365_manual_login_butt
 }
 
 .local_o365_settings_teams_h4_spacer {
-    margin: 20px 0px 30px 0px;
+    margin: 20px 0 30px 0;
     border-top: 1px solid #e9ecef;
     padding-top: 10px;
 }
