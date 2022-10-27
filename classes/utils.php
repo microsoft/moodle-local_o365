@@ -34,12 +34,11 @@ use local_o365\oauth2\clientdata;
 use local_o365\oauth2\systemapiusertoken;
 use local_o365\oauth2\token;
 use local_o365\obj\o365user;
-use local_o365\rest\azuread;
-use local_o365\rest\discovery;
-use local_o365\rest\o365api;
 use local_o365\rest\unified;
 
 defined('MOODLE_INTERNAL') || die();
+
+require_once($CFG->dirroot . '/auth/oidc/lib.php');
 
 /**
  * General purpose utility class.
@@ -51,14 +50,7 @@ class utils {
      * @return bool Whether the plugins are configured.
      */
     public static function is_configured() {
-        $cfg = get_config('auth_oidc');
-        if (empty($cfg) || !is_object($cfg)) {
-            return false;
-        }
-        if (empty($cfg->clientid) || empty($cfg->clientsecret) || empty($cfg->authendpoint) || empty($cfg->tokenendpoint)) {
-            return false;
-        }
-        return true;
+        return auth_oidc_is_setup_complete();
     }
 
     /**
@@ -192,7 +184,7 @@ class utils {
         if (empty($userids)) {
             return [];
         }
-        $aadresource = azuread::get_tokenresource();
+        $aadresource = unified::get_tokenresource();
         [$idsql, $idparams] = $DB->get_in_or_equal($userids);
         $sql = 'SELECT u.id as userid
                   FROM {user} u
@@ -297,22 +289,10 @@ class utils {
      * Construct an API client.
      *
      * @param int|null $userid
-     * @param bool $forcelegacy
-     * @return azuread|unified A constructed user API client (unified or legacy), or throw an error.
+     * @return unified A constructed unified API client, or throw an error.
      */
-    public static function get_api(int $userid = null, bool $forcelegacy = false) {
-        if ($forcelegacy) {
-            $unifiedconfigured = false;
-        } else {
-            $unifiedconfigured = unified::is_configured();
-        }
-
-        if ($unifiedconfigured === true) {
-            $tokenresource = unified::get_tokenresource();
-        } else {
-            $tokenresource = azuread::get_tokenresource();
-        }
-
+    public static function get_api(int $userid = null) {
+        $tokenresource = unified::get_tokenresource();
         $clientdata = clientdata::instance_from_oidc();
         $httpclient = new httpclient();
         if (!empty($userid)) {
@@ -324,11 +304,8 @@ class utils {
             throw new Exception('No token available for system user. Please run local_o365 health check.');
         }
 
-        if ($unifiedconfigured === true) {
-            $apiclient = new unified($token, $httpclient);
-        } else {
-            $apiclient = new azuread($token, $httpclient);
-        }
+        $apiclient = new unified($token, $httpclient);
+
         return $apiclient;
     }
 
@@ -342,7 +319,10 @@ class utils {
         static::updatemultitenantssettings();
 
         $multitenantsconfig = get_config('local_o365', 'multitenants');
-        $additionaltenants = json_decode($multitenantsconfig);
+        $additionaltenants = json_decode($multitenantsconfig, true);
+        if (!is_array($additionaltenants)) {
+            $additionaltenants = [];
+        }
 
         if (!array_key_exists($tenantid, $additionaltenants)) {
             $additionaltenants[$tenantid] = $tenantdomainnames;
@@ -484,12 +464,10 @@ class utils {
         try {
             $clientdata = clientdata::instance_from_oidc();
             $httpclient = new httpclient();
-            $tokenresource = (unified::is_enabled() === true) ?
-                unified::get_tokenresource() : discovery::get_tokenresource();
+            $tokenresource = unified::get_tokenresource();
             $token = token::instance($userid, $tokenresource, $clientdata, $httpclient);
             if (!empty($token)) {
-                $apiclient = (unified::is_enabled() === true) ?
-                    new unified($token, $httpclient) : new discovery($token, $httpclient);
+                $apiclient = new unified($token, $httpclient);
                 $tenant = $apiclient->get_default_domain_name_in_tenant();
                 $tenant = clean_param($tenant, PARAM_TEXT);
                 return ($tenant != get_config('local_o365', 'aadtenant')) ? $tenant : '';
@@ -510,12 +488,10 @@ class utils {
         try {
             $clientdata = clientdata::instance_from_oidc();
             $httpclient = new httpclient();
-            $tokenresource = (unified::is_enabled() === true) ?
-                unified::get_tokenresource() : discovery::get_tokenresource();
+            $tokenresource = unified::get_tokenresource();
             $token = token::instance($userid, $tokenresource, $clientdata, $httpclient);
             if (!empty($token)) {
-                $apiclient = (unified::is_enabled() === true) ?
-                    new unified($token, $httpclient) : new discovery($token, $httpclient);
+                $apiclient = new unified($token, $httpclient);
                 $tenant = $apiclient->get_odburl();
                 $tenant = clean_param($tenant, PARAM_TEXT);
                 return ($tenant != get_config('local_o365', 'odburl')) ? $tenant : '';

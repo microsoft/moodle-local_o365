@@ -35,6 +35,8 @@ use stdClass;
 
 defined('MOODLE_INTERNAL') || die();
 
+require_once($CFG->libdir . '/enrollib.php');
+
 /**
  * A utility class for the group / team sync feature.
  */
@@ -332,11 +334,10 @@ class utils {
      * Return the email alias of group for the given course according to configuration.
      *
      * @param stdClass $course
-     * @param stdClass|null $group
      *
      * @return string
      */
-    public static function get_group_mail_alias(stdClass $course, stdClass $group = null) : string {
+    public static function get_group_mail_alias(stdClass $course) : string {
         $groupmailaliasprefix = get_config('local_o365', 'group_mail_alias_prefix');
         if ($groupmailaliasprefix) {
             $groupmailaliasprefix = static::clean_up_group_mail_alias($groupmailaliasprefix);
@@ -365,35 +366,33 @@ class utils {
                 $coursepart = $course->shortname;
         }
 
-        if ($group) {
-            $grouppart = $group->id . '_' . $group->name;
-            $grouppart = static::clean_up_group_mail_alias($grouppart);
-            if (strlen($grouppart) > 16) {
-                $grouppart = substr($grouppart, 0, 16);
-            }
-            $grouppart = '-' . $grouppart;
-        } else {
-            $grouppart = '';
-        }
-
         $coursepart = static::clean_up_group_mail_alias($coursepart);
 
-        $coursepartmaxlength = 64 - strlen($groupmailaliasprefix) - strlen($groupmailaliassuffix) - strlen($grouppart);
+        $coursepartmaxlength = 59 - strlen($groupmailaliasprefix) - strlen($groupmailaliassuffix);
         if (strlen($coursepart) > $coursepartmaxlength) {
             $coursepart = substr($coursepart, 0, $coursepartmaxlength);
         }
 
-        return $groupmailaliasprefix . $coursepart . $grouppart . $groupmailaliassuffix;
+        return $groupmailaliasprefix . $coursepart . $groupmailaliassuffix;
     }
 
     /**
      * Remove unsupported characters from the mail alias parts, and return the result.
      *
      * @param string $mailalias
-     * @return string|string[]|null
+     * @return string
      */
     public static function clean_up_group_mail_alias(string $mailalias) {
-        return preg_replace('/[^a-z0-9-_]+/iu', '', $mailalias);
+        $notallowedbasicchars = ['@', '(', ')', "\\", '[', ']', '"', ';', ':', '.', '<', '>', ' '];
+        $chars = preg_split( '//u', $mailalias, null, PREG_SPLIT_NO_EMPTY);
+        foreach($chars as $key => $char){
+            $charorder = ord($char);
+            if ($charorder < 0 || $charorder > 127 || in_array($char, $notallowedbasicchars)) {
+                unset($chars[$key]);
+            }
+        }
+
+        return implode($chars);
     }
 
     /**
@@ -516,7 +515,7 @@ class utils {
      */
     public static function get_team_owner_user_ids_by_course_id(int $courseid) : array {
         $context = context_course::instance($courseid);
-        $teamownerusers = get_users_by_capability($context, 'local/o365:teamowner', 'u.id, u.deleted');
+        $teamownerusers = get_enrolled_users($context, 'local/o365:teamowner', 0, 'u.*', null, 0, 0, true);
         $teamowneruserids = [];
         foreach ($teamownerusers as $user) {
             if (!$user->deleted) {
@@ -551,7 +550,7 @@ class utils {
      */
     public static function get_team_member_user_ids_by_course_id(int $courseid) : array {
         $context = context_course::instance($courseid);
-        $teammemberusers = get_users_by_capability($context, 'local/o365:teammember', 'u.id, u.deleted');
+        $teammemberusers = get_enrolled_users($context, 'local/o365:teammember', 0, 'u.*', null, 0, 0, true);
         $teammemberuserids = [];
         foreach ($teammemberusers as $user) {
             if (!$user->deleted) {

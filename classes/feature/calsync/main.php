@@ -25,6 +25,8 @@
 
 namespace local_o365\feature\calsync;
 
+use local_o365\oauth2\token;
+use local_o365\rest\unified;
 use local_o365\utils;
 
 defined('MOODLE_INTERNAL') || die();
@@ -60,17 +62,12 @@ class main {
      * @param int $muserid The userid to get the outlook token for.
      * @param bool $systemfallback
      *
-     * @return \local_o365\rest\o365api|bool A constructed calendar API client (unified or legacy), or false if error.
+     * @return unified A constructed unified API client, or false if error.
      */
     public function construct_calendar_api($muserid, $systemfallback = true) {
-        $unifiedconfigured = \local_o365\rest\unified::is_configured();
-        if ($unifiedconfigured === true) {
-            $tokenresource = \local_o365\rest\unified::get_tokenresource();
-        } else {
-            $tokenresource = \local_o365\rest\calendar::get_tokenresource();
-        }
+        $tokenresource = unified::get_tokenresource();
 
-        $token = \local_o365\oauth2\token::instance($muserid, $tokenresource, $this->clientdata, $this->httpclient);
+        $token = token::instance($muserid, $tokenresource, $this->clientdata, $this->httpclient);
         if (empty($token) && $systemfallback === true) {
             $token = utils::get_app_or_system_token($tokenresource, $this->clientdata, $this->httpclient);
         }
@@ -78,11 +75,8 @@ class main {
             throw new \Exception('No token available for user #'.$muserid);
         }
 
-        if ($unifiedconfigured === true) {
-            $apiclient = new \local_o365\rest\unified($token, $this->httpclient);
-        } else {
-            $apiclient = new \local_o365\rest\calendar($token, $this->httpclient);
-        }
+        $apiclient = new unified($token, $this->httpclient);
+
         return $apiclient;
     }
 
@@ -90,13 +84,11 @@ class main {
      * Get a token that can be used for calendar syncing.
      *
      * @param int $muserid The ID of a Moodle user to get a token for.
-     * @return \local_o365\oauth2\token|null Either a token for calendar syncing, or null if no token could be retrieved.
+     * @return token|null Either a token for calendar syncing, or null if no token could be retrieved.
      */
     public function get_user_token($muserid) {
-        $tokenresource = (\local_o365\rest\unified::is_configured() === true)
-            ? \local_o365\rest\unified::get_tokenresource()
-            : \local_o365\rest\calendar::get_tokenresource();
-        $usertoken = \local_o365\oauth2\token::instance($muserid, $tokenresource, $this->clientdata, $this->httpclient);
+        $tokenresource = unified::get_tokenresource();
+        $usertoken = token::instance($muserid, $tokenresource, $this->clientdata, $this->httpclient);
         return (!empty($usertoken)) ? $usertoken : null;
     }
 
@@ -132,21 +124,25 @@ class main {
      * @param array $attendees Array of moodle user objects that are attending the event.
      * @param array $other Other parameters to include.
      * @param string $calid The o365 ID of the calendar to create the event in.
-     * @return int The new ID of the calidmap record.
+     * @return bool|int The new ID of the calidmap record.
      */
     public function create_event_raw($muserid, $eventid, $subject, $body, $timestart, $timeend, $attendees, array $other = array(),
         $calid) {
         global $DB;
         $apiclient = $this->construct_calendar_api($muserid, true);
         $o365upn = utils::get_o365_upn($muserid);
-        $response = $apiclient->create_event($subject, $body, $timestart, $timeend, $attendees, $other, $calid, $o365upn);
-        $idmaprec = [
-            'eventid' => $eventid,
-            'outlookeventid' => $response['Id'],
-            'userid' => $muserid,
-            'origin' => 'moodle',
-        ];
-        return $DB->insert_record('local_o365_calidmap', (object)$idmaprec);
+        if ($o365upn) {
+            $response = $apiclient->create_event($subject, $body, $timestart, $timeend, $attendees, $other, $calid, $o365upn);
+            $idmaprec = [
+                'eventid' => $eventid,
+                'outlookeventid' => $response['Id'],
+                'userid' => $muserid,
+                'origin' => 'moodle',
+            ];
+            return $DB->insert_record('local_o365_calidmap', (object)$idmaprec);
+        } else {
+            return false;
+        }
     }
 
     /**
@@ -312,14 +308,18 @@ class main {
                 $apiclient = $this->construct_calendar_api($event->userid);
                 $calid = (!empty($calsub->o365calid) && empty($calsub->isprimary)) ? $calsub->o365calid : null;
                 $o365upn = utils::get_o365_upn($event->userid);
-                $response = $apiclient->create_event($subject, $body, $timestart, $timeend, [], [], $calid, $o365upn);
-                $idmaprec = [
-                    'eventid' => $event->id,
-                    'outlookeventid' => $response['Id'],
-                    'userid' => $event->userid,
-                    'origin' => 'moodle',
-                ];
-                $DB->insert_record('local_o365_calidmap', (object)$idmaprec);
+                if ($o365upn) {
+                    $response = $apiclient->create_event($subject, $body, $timestart, $timeend, [], [], $calid, $o365upn);
+                    $idmaprec = [
+                        'eventid' => $event->id,
+                        'outlookeventid' => $response['Id'],
+                        'userid' => $event->userid,
+                        'origin' => 'moodle',
+                    ];
+                    $DB->insert_record('local_o365_calidmap', (object)$idmaprec);
+                } else {
+                    return false;
+                }
             }
             return true;
         }
@@ -345,14 +345,16 @@ class main {
                 $calid = null;
             }
             $o365upn = utils::get_o365_upn($event->userid);
-            $response = $apiclient->create_event($subject, $body, $timestart, $timeend, $attendees, [], $calid, $o365upn);
-            $idmaprec = [
-                'eventid' => $event->id,
-                'outlookeventid' => $response['Id'],
-                'userid' => $event->userid,
-                'origin' => 'moodle',
-            ];
-            $DB->insert_record('local_o365_calidmap', (object)$idmaprec);
+            if ($o365upn) {
+                $response = $apiclient->create_event($subject, $body, $timestart, $timeend, $attendees, [], $calid, $o365upn);
+                $idmaprec = [
+                    'eventid' => $event->id,
+                    'outlookeventid' => $response['Id'],
+                    'userid' => $event->userid,
+                    'origin' => 'moodle',
+                ];
+                $DB->insert_record('local_o365_calidmap', (object)$idmaprec);
+            }
         }
 
         // Sync non-primary attendees individually.
@@ -360,14 +362,16 @@ class main {
             $apiclient = $this->construct_calendar_api($attendee->id);
             $calid = (!empty($attendee->subo365calid)) ? $attendee->subo365calid : null;
             $o365upn = utils::get_o365_upn($attendee->userid);
-            $response = $apiclient->create_event($subject, $body, $timestart, $timeend, [], [], $calid, $o365upn);
-            $idmaprec = [
-                'eventid' => $event->id,
-                'outlookeventid' => $response['Id'],
-                'userid' => $attendee->userid,
-                'origin' => 'moodle',
-            ];
-            $DB->insert_record('local_o365_calidmap', (object)$idmaprec);
+            if ($o365upn) {
+                $response = $apiclient->create_event($subject, $body, $timestart, $timeend, [], [], $calid, $o365upn);
+                $idmaprec = [
+                    'eventid' => $event->id,
+                    'outlookeventid' => $response['Id'],
+                    'userid' => $attendee->userid,
+                    'origin' => 'moodle',
+                ];
+                $DB->insert_record('local_o365_calidmap', (object)$idmaprec);
+            }
         }
 
         return true;
