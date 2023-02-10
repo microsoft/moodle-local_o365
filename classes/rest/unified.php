@@ -2383,8 +2383,15 @@ class unified extends o365api {
     public function create_class_team_from_education_group(string $groupobjectid) {
         $endpoint = '/teams';
 
+        $templatename = "educationClass"; // Default template
+        $customtemplate = get_config('local_o365', 'custom_team_template_name');
+
+        if (isset($customtemplate) && $customtemplate !== '') {
+            $templatename = $customtemplate;
+        }
+
         $teamparams = [
-            'template@odata.bind' => "https://graph.microsoft.com/v1.0/teamsTemplates('educationClass')",
+            'template@odata.bind' => "https://graph.microsoft.com/v1.0/teamsTemplates('" . $templatename . "')",
             'group@odata.bind' => "https://graph.microsoft.com/v1.0/groups('" . $groupobjectid . "')",
         ];
 
@@ -2407,8 +2414,15 @@ class unified extends o365api {
     public function create_standard_team_from_group(string $groupobjectid) {
         $endpoint = '/teams';
 
+        $templatename = "standard"; // Default template
+        $customtemplate = get_config('local_o365', 'custom_team_template_name');
+
+        if (isset($customtemplate) && $customtemplate !== '') {
+            $templatename = $customtemplate;
+        }
+
         $teamparams = [
-            'template@odata.bind' => "https://graph.microsoft.com/v1.0/teamsTemplates('standard')",
+            'template@odata.bind' => "https://graph.microsoft.com/v1.0/teamsTemplates('" . $templatename . "')",
             'group@odata.bind' => "https://graph.microsoft.com/v1.0/groups('" . $groupobjectid . "')",
         ];
         $response = $this->apicall('post', $endpoint, json_encode($teamparams));
