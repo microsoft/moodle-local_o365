@@ -25,9 +25,11 @@
 
 defined('MOODLE_INTERNAL') || die();
 
+use core_external\external_single_structure;
+
 global $CFG;
 
-require_once($CFG->dirroot.'/lib/externallib.php');
+require_once($CFG->dirroot.'/webservice/tests/helpers.php');
 
 /**
  * Tests \local_o365\webservices\utils
@@ -35,7 +37,7 @@ require_once($CFG->dirroot.'/lib/externallib.php');
  * @group local_o365
  * @group office365
  */
-class local_o365_webservices_utils_testcase extends \advanced_testcase {
+class webservices_utils_test extends \externallib_advanced_testcase {
 
     /**
      * Perform setup before every test. This tells Moodle's phpunit to reset the database after every test.
@@ -422,7 +424,7 @@ class local_o365_webservices_utils_testcase extends \advanced_testcase {
      */
     public function test_get_assignment_return_info_schema() {
         $schema = \local_o365\webservices\utils::get_assignment_return_info_schema();
-        $this->assertTrue($schema instanceof \external_single_structure);
+        $this->assertTrue($schema instanceof external_single_structure);
         $this->assertArrayHasKey('data', $schema->keys);
     }
 
