@@ -143,7 +143,7 @@ class syncoldevents extends \core\task\adhoc_task {
                                 }
                             }
                             $calsync->create_event_raw($event->eventuserid, $event->eventid, $subject, $body, $evstart, $evend,
-                                    $subscribersprimary, [], $calid);
+                                    $subscribersprimary, $calid);
                         }
                     } catch (\Exception $e) {
                         mtrace('ERROR: '.$e->getMessage());
@@ -282,7 +282,7 @@ class syncoldevents extends \core\task\adhoc_task {
                                 }
                             }
                             $calsync->create_event_raw($event->eventuserid, $event->eventid, $subject, $body, $evstart, $evend,
-                                    $eventattendees, [], $calid);
+                                    $eventattendees, $calid);
                         }
                     } catch (\Exception $e) {
                         mtrace('ERROR: '.$e->getMessage());
@@ -400,7 +400,7 @@ class syncoldevents extends \core\task\adhoc_task {
                         if (isset($subscription->isprimary) && $subscription->isprimary == 1) {
                             $calid = null;
                         }
-                        $calsync->create_event_raw($userid, $event->eventid, $subject, $body, $evstart, $evend, [], [], $calid);
+                        $calsync->create_event_raw($userid, $event->eventid, $subject, $body, $evstart, $evend, [], $calid);
                     } else {
                         mtrace('Not creating event in Outlook. (Sync settings are inward-only.)');
                     }
