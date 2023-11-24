@@ -289,6 +289,9 @@ $string['settings_coursesync_delete_group_on_course_sync_disabled'] = 'Delete Mi
 $string['settings_coursesync_delete_group_on_course_sync_disabled_details'] = 'If enabled, Moodle will try to delete the connected Microsoft 365 Group (and associated Team) when course sync is turned off for a Moodle course.';
 $string['settings_coursesync_courses_per_task'] = 'Courses to sync per task run';
 $string['settings_coursesync_courses_per_task_details'] = 'The number of courses whose Team/group sync status are to be processed at each task run.';
+$string['settings_coursesync_custom_team_template_name'] = 'Custom Teams template name';
+$string['settings_coursesync_custom_team_template_name_details'] = 'If entered, Teams will be created using this custom template rather than the built in defaults.';
+
 
 // Settings in the "Course sync customization" page in the "Course sync" section of the "Sync settings" tab.
 $string['acp_coursesynccustom'] = 'Course sync customization';
@@ -1003,7 +1006,7 @@ $string['notification_days_days'] = '{$a} days';
 $string['notification_subject_invalid_secret'] = 'Action required: invalid Azure app secret found';
 $string['notification_content_invalid_secret'] = 'Dear site administrator,
 
-The Azure app secret used in your Moodle and Microsoft 365 integration seems to be invalid. This can either be caused by the secret expired, or it has been deleted.  
+The Azure app secret used in your Moodle and Microsoft 365 integration seems to be invalid. This can either be caused by the secret expired, or it has been deleted.
 Please review the secret to ensure the integration works as expected.';
 
 // Misc.

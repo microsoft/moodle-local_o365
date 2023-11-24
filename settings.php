@@ -241,6 +241,11 @@ if ($hassiteconfig) {
         $desc = new lang_string('settings_coursesync_courses_per_task_details', 'local_o365');
         $settings->add(new admin_setting_configtext('local_o365/courses_per_task', $label, $desc, 20, PARAM_INT));
 
+        // Custom Team template
+        $label = new lang_string('settings_coursesync_custom_team_template_name', 'local_o365');
+        $desc = new lang_string('settings_coursesync_custom_team_template_name_details', 'local_o365');
+        $settings->add(new admin_setting_configtext('local_o365/custom_team_template_name', $label, $desc, null, PARAM_TEXT));
+
         // Team / group name section.
         $settings->add(new admin_setting_heading('local_o365_section_team_name',
             new lang_string('settings_secthead_team_group_name', 'local_o365'),
