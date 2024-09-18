@@ -104,6 +104,7 @@ class update_onenoteassignment extends external_api {
                 'markingworkflow',
                 'markinganonymous',
                 'markingallocation',
+                'markinganonymous',
             ];
             $assigninfo = [
                 'coursemodule' => $module->id,
