@@ -143,7 +143,13 @@ class main {
     public function get_mappings(): array {
         global $DB;
 
-        $mappings = $DB->get_records('local_o365_objects', ['type' => 'group', 'subtype' => 'cohort']);
+        // Use recordset instead of get_records to reduce memory usage.
+        $mappingrecordset = $DB->get_recordset('local_o365_objects', ['type' => 'group', 'subtype' => 'cohort']);
+        $mappings = [];
+        foreach ($mappingrecordset as $mapping) {
+            $mappings[$mapping->id] = $mapping;
+        }
+        $mappingrecordset->close();
 
         return $mappings;
     }
@@ -215,14 +221,19 @@ class main {
     public function update_groups_cache(): bool {
         global $DB;
 
-        if (utils::update_groups_cache($this->graphclient, 1)) {
-            $sql = 'SELECT *
-                      FROM {local_o365_groups_cache}
-                     WHERE not_found_since = 0';
-            $this->grouplist = $DB->get_records_sql($sql);
+        try {
+            if (utils::update_groups_cache($this->graphclient, 1)) {
+                $sql = 'SELECT *
+                          FROM {local_o365_groups_cache}
+                         WHERE not_found_since = 0';
+                $this->grouplist = $DB->get_records_sql($sql);
 
-            return true;
-        } else {
+                return true;
+            } else {
+                return false;
+            }
+        } catch (moodle_exception $e) {
+            utils::debug('Exception in update_groups_cache: ' . $e->getMessage(), __METHOD__, $e);
             return false;
         }
     }
@@ -297,7 +308,13 @@ class main {
         global $DB;
 
         $microsoftuseroids = array_column($microsoftuserobjects, 'id');
-        $currentmembers = $DB->get_records('cohort_members', ['cohortid' => $cohortid], '', 'userid');
+        // Use recordset instead of get_records to reduce memory usage.
+        $currentmembersrecordset = $DB->get_recordset('cohort_members', ['cohortid' => $cohortid], '', 'userid');
+        $currentmembers = [];
+        foreach ($currentmembersrecordset as $member) {
+            $currentmembers[$member->userid] = $member;
+        }
+        $currentmembersrecordset->close();
         $connectedusers = $this->get_all_potential_user_details($microsoftuseroids, array_keys($currentmembers));
 
         $microsoftuseroidsflipped = array_flip($microsoftuseroids);

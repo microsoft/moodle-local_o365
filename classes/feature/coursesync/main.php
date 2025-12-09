@@ -1068,15 +1068,27 @@ class main {
         }
 
         // Fetch teams from Graph API.
-        $teams = $this->graphclient->get_teams();
+        try {
+            $teams = $this->graphclient->get_teams();
+            if ($teams === null || !is_array($teams)) {
+                $this->mtrace('Failed to fetch teams from Graph API', 1);
+                return false;
+            }
+        } catch (moodle_exception $e) {
+            $this->mtrace('Error fetching teams: ' . $e->getMessage(), 1);
+            utils::debug('Exception in get_teams: ' . $e->getMessage(), __METHOD__, $e);
+            return false;
+        }
 
         // Build existing teams records cache.
         $this->mtrace('Building existing teams cache records', 1);
-        $existingcacherecords = $DB->get_records('local_o365_teams_cache');
+        // Use recordset instead of get_records to reduce memory usage.
+        $existingcacherecordset = $DB->get_recordset('local_o365_teams_cache');
         $existingcachebyoid = [];
-        foreach ($existingcacherecords as $existingcacherecord) {
+        foreach ($existingcacherecordset as $existingcacherecord) {
             $existingcachebyoid[$existingcacherecord->objectid] = $existingcacherecord;
         }
+        $existingcacherecordset->close();
 
         // Compare, then create, update, or delete cache.
         $this->mtrace('Updating teams cache records', 1);

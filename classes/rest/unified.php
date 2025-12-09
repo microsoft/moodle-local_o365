@@ -1254,11 +1254,11 @@ class unified extends o365api {
         ];
         foreach ($attendees as $attendee) {
             $eventdata['attendees'][] = [
-                'EmailAddress' => [
-                    'Address' => $attendee->email,
-                    'Name' => $attendee->firstname.' '.$attendee->lastname,
+                'emailAddress' => [
+                    'address' => $attendee->email,
+                    'name' => $attendee->firstname.' '.$attendee->lastname,
                 ],
-                'type' => 'Resource',
+                'type' => 'resource',
             ];
         }
         $eventdata = array_merge($eventdata, $other);
@@ -1303,11 +1303,12 @@ class unified extends o365api {
      *
      * @param string $outlookeventid The event ID in o365 outlook.
      * @param array $updated Array of updated information. Keys are 'subject', 'body', 'starttime', 'endtime', and 'attendees'.
-     * @param string $upn user's userPrincipalName
+     * @param string $owner user's userPrincipalName or group object id
+     * @param string $scope 'user' or 'group'
      * @return array|null Returned response, or null if error.
      * @throws moodle_exception
      */
-    public function update_event(string $outlookeventid, array $updated, string $upn): ?array {
+    public function update_event(string $outlookeventid, array $updated, string $owner, string $scope = 'user'): ?array {
         if (empty($outlookeventid) || empty($updated)) {
             return [];
         }
@@ -1336,8 +1337,12 @@ class unified extends o365api {
                         'type' => 'resource'];
             }
         }
-        $updateddata = json_encode($updateddata);
-        $response = $this->apicall('patch', '/users/' . $upn . '/events/' . $outlookeventid, $updateddata);
+
+        $path = $scope === 'group'
+                ? '/groups/' . $owner . '/events/' . $outlookeventid
+                : '/users/' . $owner . '/events/' . $outlookeventid;
+
+        $response = $this->apicall('patch', $path, json_encode($updateddata));
         $expectedparams = ['id' => null];
         return $this->process_apicall_response($response, $expectedparams);
     }
@@ -1346,12 +1351,17 @@ class unified extends o365api {
      * Delete an event.
      *
      * @param string $outlookeventid The event ID in o365 outlook.
-     * @param string $upn user's userPrincipalName
+     * @param string $owner user's userPrincipalName or group object id
+     * @param string $scope 'user' or 'group'
      * @return bool Success/Failure.
      */
-    public function delete_event(string $outlookeventid, string $upn): bool {
+    public function delete_event(string $outlookeventid, string $owner, string $scope = 'user'): bool {
         if (!empty($outlookeventid)) {
-            $this->apicall('delete', '/users/' . $upn . '/events/' . $outlookeventid);
+            $path = $scope === 'group'
+                ? '/groups/' . $owner . '/events/' . $outlookeventid
+                : '/users/' . $owner . '/events/' . $outlookeventid;
+
+            $this->apicall('delete', $path);
         }
         return true;
     }
@@ -1846,6 +1856,163 @@ class unified extends o365api {
         $apiresponse = $this->apicall('post', "/users/$o365userid/drive/items/$fileid/createLink", json_encode($params));
         $response = $this->process_apicall_response($apiresponse);
         return $response['link']['webUrl'];
+    }
+
+    /**
+     * Upload a file to OneDrive using createUploadSession API.
+     *
+     * @param string $o365userid The user's O365 user ID.
+     * @param string $filepath The local path to the file to upload.
+     * @param string $filename The name of the new file.
+     * @param string $parentid The parent folder ID (optional, defaults to root).
+     * @return string The uploaded file's ID.
+     * @throws moodle_exception
+     */
+    public function upload_file_with_session(
+        string $o365userid,
+        string $filepath,
+        string $filename,
+        string $parentid = ''
+    ): string {
+        // Create upload session.
+        $endpoint = "/users/$o365userid/drive/";
+        if (!empty($parentid)) {
+            $endpoint .= "items/$parentid:/" . urlencode($filename) . ":/createUploadSession";
+        } else {
+            $endpoint .= "root:/" . urlencode($filename) . ":/createUploadSession";
+        }
+
+        $behaviour = ['item' => ['@microsoft.graph.conflictBehavior' => 'rename']];
+        $sessionresponse = $this->apicall('post', $endpoint, json_encode($behaviour));
+        $session = $this->process_apicall_response($sessionresponse, ['uploadUrl' => null]);
+
+        if (empty($session['uploadUrl'])) {
+            throw new moodle_exception('errorwhilesharing', 'repository_office365');
+        }
+
+        // Upload the file content.
+        $filesize = filesize($filepath);
+        if ($filesize === false) {
+            throw new moodle_exception('errorwhiledownload', 'repository_office365');
+        }
+
+        // Prepare curl clients - one without auth, one with auth.
+        $curl = new \curl();
+        $authcurl = new \curl();
+        $authcurl->setHeader(['Authorization: Bearer ' . $this->token->get_token()]);
+
+        $options = ['file' => $filepath];
+
+        // Try each curl class in turn until we succeed.
+        // First attempt an upload with no auth headers (will work for personal onedrive accounts).
+        // If that fails, try an upload with the auth headers (will work for work onedrive accounts).
+        $curls = [$curl, $authcurl];
+        $response = null;
+        foreach ($curls as $curlinstance) {
+            $curlinstance->setHeader('Content-Length: ' . $filesize);
+            $curlinstance->setHeader('Content-Range: bytes 0-' . ($filesize - 1) . '/' . $filesize);
+            $response = $curlinstance->put($session['uploadUrl'], $options);
+            if ($curlinstance->errno == 0) {
+                $response = json_decode($response, true);
+            }
+            if (is_array($response) && !empty($response['id'])) {
+                // We can stop now - there is a valid file returned.
+                return $response['id'];
+            }
+        }
+
+        // If we get here, neither curl attempt succeeded.
+        throw new moodle_exception('errorwhilesharing', 'repository_office365');
+    }
+
+    /**
+     * Copy a OneDrive file by downloading and re-uploading it.
+     *
+     * @param string $fileid The source file id.
+     * @param string $o365userid The user's O365 user ID (for destination).
+     * @param string $newname The new file name (optional, defaults to original name with " - Shared" suffix).
+     * @param string $parentid The parent folder ID (optional, defaults to root).
+     * @return string The new file's ID.
+     * @throws moodle_exception
+     */
+    public function copy_file(string $fileid, string $o365userid, string $newname = '', string $parentid = ''): string {
+        // Get file metadata including download URL.
+        $fileinfo = $this->get_file_metadata($fileid, $o365userid);
+
+        if (empty($fileinfo['@microsoft.graph.downloadUrl'])) {
+            throw new moodle_exception('errorwhiledownload', 'repository_office365');
+        }
+
+        // Use original filename if no new name specified.
+        if (empty($newname)) {
+            $newname = $fileinfo['name'];
+        }
+
+        // Download the file to a temporary location.
+        $tmpfilename = clean_param($fileid, PARAM_PATH);
+        $temppath = make_request_directory() . $tmpfilename;
+
+        // Download without auth headers (as per Graph API requirements).
+        $curl = new \curl();
+        $options = ['filepath' => $temppath, 'timeout' => 60, 'followlocation' => true, 'maxredirs' => 5];
+        $result = $curl->download_one($fileinfo['@microsoft.graph.downloadUrl'], null, $options);
+
+        if (!$result) {
+            throw new moodle_exception('errorwhiledownload', 'repository_office365');
+        }
+
+        // Upload to the destination.
+        $newfileid = $this->upload_file_with_session($o365userid, $temppath, $newname, $parentid);
+
+        // Clean up temp file.
+        @unlink($temppath);
+
+        return $newfileid;
+    }
+
+    /**
+     * Copy a group OneDrive file to a user's OneDrive by downloading and re-uploading it.
+     *
+     * @param string $groupid The group's O365 group ID.
+     * @param string $fileid The source file id in the group.
+     * @param string $o365userid The user's O365 user ID (for destination).
+     * @param string $newname The new file name (optional, defaults to original name).
+     * @return string The new file's ID in the user's OneDrive.
+     * @throws moodle_exception
+     */
+    public function copy_group_file_to_user(string $groupid, string $fileid, string $o365userid, string $newname = ''): string {
+        // Get file metadata including download URL.
+        $fileinfo = $this->get_group_file_metadata($groupid, $fileid);
+
+        if (empty($fileinfo['@microsoft.graph.downloadUrl'])) {
+            throw new moodle_exception('errorwhiledownload', 'repository_office365');
+        }
+
+        // Use original filename if no new name specified.
+        if (empty($newname)) {
+            $newname = $fileinfo['name'];
+        }
+
+        // Download the file to a temporary location.
+        $tmpfilename = clean_param($fileid, PARAM_PATH);
+        $temppath = make_request_directory() . $tmpfilename;
+
+        // Download without auth headers (as per Graph API requirements).
+        $curl = new \curl();
+        $options = ['filepath' => $temppath, 'timeout' => 60, 'followlocation' => true, 'maxredirs' => 5];
+        $result = $curl->download_one($fileinfo['@microsoft.graph.downloadUrl'], null, $options);
+
+        if (!$result) {
+            throw new moodle_exception('errorwhiledownload', 'repository_office365');
+        }
+
+        // Upload to the user's OneDrive root.
+        $newfileid = $this->upload_file_with_session($o365userid, $temppath, $newname, '');
+
+        // Clean up temp file.
+        @unlink($temppath);
+
+        return $newfileid;
     }
 
     /**
