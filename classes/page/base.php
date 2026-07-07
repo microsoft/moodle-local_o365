@@ -25,6 +25,8 @@
 
 namespace local_o365\page;
 
+use core\context\system;
+
 /**
  * Basic page-style class handling page setup and page modes.
  */
@@ -48,7 +50,7 @@ class base {
     public function __construct($url, $title, $context = null) {
         global $PAGE;
         if (empty($context)) {
-            $context = \context_system::instance();
+            $context = system::instance();
         }
 
         $this->set_context($context);
@@ -90,7 +92,7 @@ class base {
     /**
      * Set the URL of the page.
      *
-     * @param string|moodle_url $url The new page URL.
+     * @param string|\core\url $url The new page URL.
      */
     public function set_url($url) {
         global $PAGE;

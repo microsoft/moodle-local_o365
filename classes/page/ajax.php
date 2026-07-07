@@ -25,6 +25,7 @@
 
 namespace local_o365\page;
 
+use core\context\system;
 use core_component;
 use core_plugin_manager;
 use local_o365\httpclient;
@@ -237,6 +238,15 @@ class ajax extends base {
 
             $unifiedapiclient = new unified($token, $httpclient);
 
+            // Cache education license status to avoid Graph API calls in settings page.
+            try {
+                $educationlicensestatus = $unifiedapiclient->has_education_license();
+                set_config('education_license_cached', (int)$educationlicensestatus, 'local_o365');
+            } catch (Exception $e) {
+                // If we can't determine license, leave the existing cache value.
+                utils::debug('Could not determine education license status: ' . $e->getMessage(), __METHOD__);
+            }
+
             // Check app-only perms.
             $missingappperms = $unifiedapiclient->check_graph_apponly_permissions();
             $unifiedapi->missingappperms = $missingappperms;
@@ -315,7 +325,7 @@ class ajax extends base {
         require_once($CFG->dirroot . '/lib/classes/component.php');
         require_once($CFG->libdir . '/sessionlib.php');
 
-        $systemcontext = \context_system::instance();
+        $systemcontext = system::instance();
 
         $data = new stdClass();
         $data->success = [];

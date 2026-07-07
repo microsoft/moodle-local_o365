@@ -84,12 +84,16 @@ class unified extends o365api {
      * @throws dml_exception
      */
     public static function get_tokenresource(): string {
+        if (static::use_chinese_api() === true) {
+            return self::RESOURCE_URL_CHINESE;
+        }
+
         $oidcresource = get_config('auth_oidc', 'oidcresource');
         if (!empty($oidcresource)) {
             return $oidcresource;
         }
 
-        return (static::use_chinese_api() === true) ? self::RESOURCE_URL_CHINESE : self::RESOURCE_URL;
+        return self::RESOURCE_URL;
     }
 
     /**
@@ -454,7 +458,9 @@ class unified extends o365api {
             unset($groupdata['description']);
         }
 
-        $response = $this->apicall('post', '/groups', json_encode($groupdata));
+        $jsondata = json_encode($groupdata);
+
+        $response = $this->apicall('post', '/groups', $jsondata);
         $expectedparams = ['id' => null];
         try {
             $response = $this->process_apicall_response($response, $expectedparams);
@@ -667,9 +673,10 @@ class unified extends o365api {
      * @throws moodle_exception
      */
     public function get_transitive_group_members(string $groupobjectid): array {
-        $endpoint = '/groups/' . $groupobjectid . '/transitiveMembers/microsoft.graph.user?$select=id';
+        $endpoint = '/groups/' . $groupobjectid . '/transitiveMembers/microsoft.graph.user';
+        $odataqueries = ['$select' => 'id'];
 
-        return $this->paginatedapicall('get', $endpoint);
+        return $this->paginatedapicall('get', $endpoint, $odataqueries);
     }
 
     /**
@@ -1382,6 +1389,30 @@ class unified extends o365api {
         $endpoint = '/directory/deleteditems/Microsoft.Graph.User';
 
         return $this->paginatedapicall('get', $endpoint, [], ['value' => null], true);
+    }
+
+    /**
+     * Process recently deleted users with a callback, streaming to avoid memory overhead.
+     *
+     * Calls the callback for each batch of deleted users from the API, allowing processing
+     * without loading all deleted users into memory at once.
+     *
+     * @param callable $callback Function called with array of deleted user objects from each API page.
+     * @return void
+     * @throws moodle_exception
+     */
+    public function process_deleted_users_batched(callable $callback): void {
+        $odataqueries = ['$top' => (string)self::GRAPH_API_BATCH_SIZE];
+
+        $pagehandler = function (array $result) use ($callback): int {
+            if (!empty($result['value']) && is_array($result['value'])) {
+                $callback($result['value']);
+                return count($result['value']);
+            }
+            return 0;
+        };
+
+        $this->execute_odata_paginated('/directory/deleteditems/Microsoft.Graph.User', $odataqueries, $pagehandler);
     }
 
     /**
@@ -2706,7 +2737,16 @@ class unified extends o365api {
      * Microsoft Graph allows up to 20 requests per batch.
      *
      * @param array $upns Array of user principal names
-     * @return array Associative array with UPN as key and photo data (binary or false) as value
+     * @return array Associative array with UPN as key and status array as value.
+     *         Each status array contains:
+     *         - 'status' (string): One of:
+     *           - 'success': Photo fetched successfully (data contains binary photo)
+     *           - 'not_found': No photo in Office 365 (HTTP 404)
+     *           - 'error': API error (permissions, rate limit, server error, etc.)
+     *           - 'invalid_data': Photo data failed validation (not a valid image)
+     *           - 'batch_error': Batch request failed or UPN not in response
+     *         - 'data' (string|false): Binary photo data on success, false otherwise
+     *         - 'http_status' (int|null): HTTP status code from API response, null if batch error
      */
     public function get_photos_batch(array $upns): array {
         if (empty($upns)) {
@@ -2720,11 +2760,14 @@ class unified extends o365api {
             $batchrequests = [];
             $idtoupnmap = [];
 
-            // Pre-initialise every UPN to false so that UPNs absent from the batch
-            // response (partial API failure) are treated as "no photo" rather than
-            // silently skipped by the caller's isset() / empty() branch logic.
+            // Pre-initialise every UPN with status info. UPNs absent from the batch
+            // response (partial API failure) are marked as 'batch_error'.
             foreach ($chunk as $upn) {
-                $results[$upn] = false;
+                $results[$upn] = [
+                    'status' => 'batch_error',
+                    'data' => false,
+                    'http_status' => null,
+                ];
             }
 
             // Build batch request.
@@ -2748,28 +2791,45 @@ class unified extends o365api {
                     foreach ($batchresponse['responses'] as $individualresponse) {
                         $requestid = $individualresponse['id'];
                         $upn = $idtoupnmap[$requestid];
+                        $httpstatus = $individualresponse['status'] ?? null;
 
-                        if ($individualresponse['status'] === 200 && !empty($individualresponse['body'])) {
+                        if ($httpstatus === 200 && !empty($individualresponse['body'])) {
                             // Graph batch responses encode binary content as base64 in the JSON envelope.
                             $binarydata = base64_decode($individualresponse['body'], true);
                             if ($binarydata !== false && $this->is_valid_photo_binary($binarydata)) {
-                                $results[$upn] = $binarydata;
+                                $results[$upn] = [
+                                    'status' => 'success',
+                                    'data' => $binarydata,
+                                    'http_status' => $httpstatus,
+                                ];
                             } else {
                                 // Decoded data is not valid binary image data.
-                                $results[$upn] = false;
+                                $results[$upn] = [
+                                    'status' => 'invalid_data',
+                                    'data' => false,
+                                    'http_status' => $httpstatus,
+                                ];
                             }
-                        } else if ($individualresponse['status'] === 404) {
-                            // No photo found for this user.
-                            $results[$upn] = false;
+                        } else if ($httpstatus === 404) {
+                            // No photo found for this user (legitimate case).
+                            $results[$upn] = [
+                                'status' => 'not_found',
+                                'data' => false,
+                                'http_status' => $httpstatus,
+                            ];
                         } else {
-                            // Other error - treat as no photo.
-                            $results[$upn] = false;
+                            // Other error (permission denied, rate limited, server error, etc).
+                            $results[$upn] = [
+                                'status' => 'error',
+                                'data' => false,
+                                'http_status' => $httpstatus,
+                            ];
                         }
                     }
                 }
             } catch (moodle_exception $e) {
                 // Batch call itself failed; pre-initialisation above already set all
-                // UPNs in this chunk to false, so no additional work needed here.
+                // UPNs in this chunk to batch_error status.
                 debugging('Batch photo request failed: ' . $e->getMessage(), DEBUG_DEVELOPER);
             }
         }
@@ -2895,6 +2955,7 @@ class unified extends o365api {
      * @param string $description
      * @param string $externalid
      * @param string $externalname
+     * @param array|null $extra
      * @return array|null
      * @throws moodle_exception
      */
@@ -2903,7 +2964,8 @@ class unified extends o365api {
         string $mailnickname,
         string $description,
         string $externalid,
-        string $externalname
+        string $externalname,
+        ?array $extra = null
     ): ?array {
         if (!empty($mailnickname)) {
             $mailnickname = core_text::strtolower($mailnickname);
@@ -2925,6 +2987,13 @@ class unified extends o365api {
             'mailNickname' => $mailnickname,
         ];
 
+        if (!empty($extra)) {
+            // Set extra parameters.
+            foreach ($extra as $extraname => $value) {
+                $groupdata[$extraname] = $value;
+            }
+        }
+
         // Description cannot be set and empty.
         if (empty($groupdata['description'])) {
             unset($groupdata['description']);
@@ -2941,7 +3010,14 @@ class unified extends o365api {
             $expectedexception = 'Another object with the same value for property mailNickname already exists.';
             if ($e->a == $expectedexception) {
                 $mailnickname .= '_' . sprintf('%04d', random_int(0, 9999));
-                return $this->create_educationclass_group($displayname, $mailnickname, $description, $externalid, $externalname);
+                return $this->create_educationclass_group(
+                    $displayname,
+                    $mailnickname,
+                    $description,
+                    $externalid,
+                    $externalname,
+                    $extra
+                );
             } else {
                 utils::debug($e->getMessage(), __METHOD__, $e);
                 throw $e;
@@ -3022,6 +3098,20 @@ class unified extends o365api {
             'template@odata.bind' => "https://graph.microsoft.com/v1.0/teamsTemplates('" . $template . "')",
             'group@odata.bind' => "https://graph.microsoft.com/v1.0/groups('" . $groupobjectid . "')",
         ];
+
+        // For education templates, set proper teamDefinition to match template specialization.
+        // Specialization must use PascalCase: 'EducationClass', 'EducationStaff', etc.
+        $specializationmap = [
+            'educationClass' => 'EducationClass',
+            'educationStaff' => 'EducationStaff',
+            'educationProfessionalLearningCommunity' => 'EducationProfessionalLearningCommunity',
+        ];
+        if (isset($specializationmap[$template])) {
+            $teamparams['teamDefinition'] = [
+                'specialization' => $specializationmap[$template],
+            ];
+        }
+
         $response = $this->apicall('post', $endpoint, json_encode($teamparams));
 
         if ($this->check_expected_http_code(['202'])) {
@@ -3029,6 +3119,278 @@ class unified extends o365api {
         } else {
             return $this->process_apicall_response($response);
         }
+    }
+
+    /**
+     * Create a team directly from a template without requiring a pre-existing group.
+     *
+     * @param string $displayname Team display name
+     * @param string $description Team description
+     * @param string $template Template ID (e.g., 'educationProfessionalLearningCommunity')
+     * @param array|null $owneruserids Array of owner user object IDs (required for application context)
+     * @return array|bool Response from the API
+     * @throws moodle_exception
+     */
+    public function create_team_from_template(
+        string $displayname,
+        string $description,
+        string $template = 'standard',
+        ?array $owneruserids = null
+    ) {
+        $endpoint = '/teams';
+
+        $teamparams = [
+            'template@odata.bind' => "https://graph.microsoft.com/v1.0/teamsTemplates('" . $template . "')",
+            'displayName' => $displayname,
+        ];
+
+        if (!empty($description)) {
+            $teamparams['description'] = $description;
+        }
+
+        // Add owners to the team. At least one owner is required for application context.
+        if (!empty($owneruserids)) {
+            $members = [];
+            foreach ($owneruserids as $userid) {
+                $members[] = [
+                    '@odata.type' => '#microsoft.graph.aadUserConversationMember',
+                    'roles' => ['owner'],
+                    'user@odata.bind' => "https://graph.microsoft.com/v1.0/users/{$userid}",
+                ];
+            }
+            if (!empty($members)) {
+                $teamparams['members'] = $members;
+            }
+        }
+
+        $response = $this->apicall('post', $endpoint, json_encode($teamparams));
+
+        if ($this->check_expected_http_code(['202'])) {
+            return true;
+        } else {
+            return $this->process_apicall_response($response);
+        }
+    }
+
+    /**
+     * Validate if a Teams template ID exists.
+     *
+     * @param string $template The template ID to validate.
+     * @return bool True if template exists, false otherwise.
+     * @throws moodle_exception If there's an API error (authentication, permission, server error, etc).
+     */
+    public function validate_teams_template(string $template): bool {
+        $endpoint = '/teamwork/teamTemplates';
+        $response = $this->betaapicall('get', $endpoint);
+
+        $httpclientinfo = (array) $this->httpclient->info;
+        $httpcode = $httpclientinfo['http_code'] ?? 0;
+
+        if ($httpcode === 200) {
+            // Parse the response to check if the template ID exists in the list.
+            $templates = $this->process_apicall_response($response, ['value' => null]);
+            if (isset($templates['value']) && is_array($templates['value'])) {
+                foreach ($templates['value'] as $tmpl) {
+                    if (isset($tmpl['id']) && $tmpl['id'] === $template) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        } else if ($httpcode === 403 || $httpcode === 401) {
+            throw new moodle_exception(
+                'erroro365apibadcall_message',
+                'local_o365',
+                '',
+                'Permission denied: Check Office 365 API permissions.'
+            );
+        } else {
+            // For other errors (400, 5xx, etc), process the response to extract error details.
+            return $this->process_apicall_response($response);
+        }
+    }
+
+    /**
+     * Get the async operation location header from the last HTTP response.
+     *
+     * @return string|null The location URL or null if not found.
+     */
+    public function get_last_async_operation_location(): ?string {
+        // Get raw response headers from the curl client.
+        $rawheaders = $this->httpclient->get_raw_response();
+        if (empty($rawheaders) || !is_array($rawheaders)) {
+            return null;
+        }
+
+        // Parse the Location header from raw response headers.
+        foreach ($rawheaders as $header) {
+            $headerline = trim($header);
+            if (stripos($headerline, 'location:') === 0) {
+                // Extract the URL after "Location: ".
+                $location = trim(substr($headerline, 9));
+                if (!empty($location)) {
+                    return $location;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Get the status of a team creation async operation.
+     *
+     * @param string $operationid The operation ID.
+     * @return array|null Operation status array with 'id', 'status', 'targetResourceId' keys, or null on error.
+     * @throws moodle_exception
+     */
+    public function get_async_operation_status(string $operationid): ?array {
+        try {
+            $endpoint = "/teams/operations/{$operationid}";
+            utils::debug("Getting operation status from endpoint: {$endpoint}", __METHOD__);
+            $response = $this->apicall('get', $endpoint);
+            utils::debug("Operation status response: " . substr($response, 0, 200), __METHOD__);
+            return $this->process_apicall_response($response);
+        } catch (moodle_exception $e) {
+            utils::debug("Failed to get async operation status: " . $e->getMessage(), __METHOD__);
+            return null;
+        }
+    }
+
+    /**
+     * Wait for a team creation async operation to complete using the operation URL, with timeout.
+     *
+     * Polls the operation status up to 20 times with 2-second intervals (~40 seconds maximum wait).
+     * The URL from the Location header is used directly for polling.
+     *
+     * @param string $operationurl The async operation URL from the Location header.
+     * @param callable|null $pollcallback Optional callback function called for each poll: callback(int $pollcount, string $state).
+     * @return string|null The target resource ID (group/team ID) on success, null on timeout.
+     * @throws moodle_exception
+     */
+    public function wait_for_async_operation_by_url(string $operationurl, ?callable $pollcallback = null): ?string {
+        $maxwait = 120; // 2 minutes.
+        $maxpolls = 20;
+        $pollinterval = 2; // 2 seconds between polls.
+        $elapsed = 0;
+        $pollcount = 0;
+
+        while ($pollcount < $maxpolls && $elapsed < $maxwait) {
+            $pollcount++;
+            $statusinfo = $this->get_async_operation_status_by_url($operationurl, true);
+            if (!$statusinfo || !is_array($statusinfo) || !isset($statusinfo['status'])) {
+                $state = isset($statusinfo['error']) ? 'error: ' . $statusinfo['error'] : 'failed to get status';
+                utils::debug("Poll #{$pollcount}/{$maxpolls}: {$state}", __METHOD__);
+                if ($pollcallback) {
+                    $pollcallback($pollcount, $state);
+                }
+                sleep($pollinterval);
+                $elapsed += $pollinterval;
+                continue;
+            }
+
+            $status = $statusinfo;
+
+            $state = $status['status'] ?? null;
+            utils::debug("Poll #{$pollcount}/{$maxpolls}: Operation state = {$state}", __METHOD__);
+            if ($pollcallback) {
+                $pollcallback($pollcount, $state);
+            }
+
+            if ($state === 'succeeded') {
+                $targetid = $status['targetResourceId'] ?? null;
+                utils::debug("Poll #{$pollcount}/{$maxpolls}: Operation succeeded with target ID: {$targetid}", __METHOD__);
+                return $targetid;
+            } else if ($state === 'failed') {
+                $error = $status['error'] ?? 'Unknown error';
+                throw new moodle_exception('teamsasyncfailed', 'local_o365', '', $error);
+            } else if ($state === 'notStarted' || $state === 'inProgress') {
+                sleep($pollinterval);
+                $elapsed += $pollinterval;
+                continue;
+            } else {
+                throw new moodle_exception('unknownasyncstate', 'local_o365', '', $state);
+            }
+        }
+
+        // Timeout.
+        utils::debug("Poll timeout after {$pollcount} polls ({$elapsed}s, max {$maxwait}s)", __METHOD__);
+        return null;
+    }
+
+    /**
+     * Get the status of a team creation async operation using the operation URL.
+     *
+     * @param string $operationurl The operation URL from the Location header (relative path).
+     * @param bool $returnerror If true, return error info in result.
+     * @return array|null Operation status array with 'id', 'status', 'targetResourceId' keys, or array with 'error' key on error.
+     * @throws moodle_exception
+     */
+    public function get_async_operation_status_by_url(string $operationurl, bool $returnerror = false): ?array {
+        try {
+            utils::debug("Getting operation status from URL: {$operationurl}", __METHOD__);
+            // Use apicall() to leverage token refresh, throttling, and region-specific Graph endpoints.
+            $response = $this->apicall('get', $operationurl);
+            utils::debug("Operation status response: " . substr($response, 0, 200), __METHOD__);
+            return $this->process_apicall_response($response);
+        } catch (moodle_exception $e) {
+            $errormsg = $e->getMessage();
+            utils::debug("Failed to get async operation status. Error: {$errormsg}", __METHOD__);
+            if ($returnerror) {
+                return ['error' => $errormsg];
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Wait for a team creation async operation to complete, with timeout.
+     *
+     * Polls the operation status every 2 seconds up to a maximum of 5 minutes.
+     *
+     * @param string $operationid The async operation ID.
+     * @return string|null The target resource ID (group/team ID) on success, null on timeout.
+     * @throws moodle_exception
+     */
+    public function wait_for_async_operation(string $operationid): ?string {
+        $maxwait = 300; // 5 minutes.
+        $pollinterval = 2;
+        $elapsed = 0;
+        $pollcount = 0;
+
+        while ($elapsed < $maxwait) {
+            $pollcount++;
+            $status = $this->get_async_operation_status($operationid);
+            if (!$status) {
+                utils::debug("Poll #{$pollcount}: Failed to get operation status", __METHOD__);
+                // Don't return null immediately - keep polling, the API might be temporarily unavailable.
+                sleep($pollinterval);
+                $elapsed += $pollinterval;
+                continue;
+            }
+
+            $state = $status['status'] ?? null;
+            utils::debug("Poll #{$pollcount}: Operation state = {$state}", __METHOD__);
+
+            if ($state === 'succeeded') {
+                $targetid = $status['targetResourceId'] ?? null;
+                utils::debug("Poll #{$pollcount}: Operation succeeded with target ID: {$targetid}", __METHOD__);
+                return $targetid;
+            } else if ($state === 'failed') {
+                $error = $status['error'] ?? 'Unknown error';
+                throw new moodle_exception('teamsasyncfailed', 'local_o365', '', $error);
+            } else if ($state === 'notStarted' || $state === 'inProgress') {
+                sleep($pollinterval);
+                $elapsed += $pollinterval;
+                continue;
+            } else {
+                throw new moodle_exception('unknownasyncstate', 'local_o365', '', $state);
+            }
+        }
+
+        // Timeout.
+        utils::debug("Poll timeout after {$pollcount} polls ({$elapsed}s)", __METHOD__);
+        return null;
     }
 
     /**

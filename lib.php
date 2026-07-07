@@ -23,6 +23,9 @@
  * @copyright (C) 2016 onwards Microsoft Open Technologies, Inc. (http://msopentech.com/)
  */
 
+use core\context\system;
+use core\context\user;
+
 defined('MOODLE_INTERNAL') || die();
 
 require_once($CFG->libdir . '/filestorage/zip_archive.php');
@@ -116,8 +119,8 @@ const COURSE_USER_SYNC_DIRECTION_BOTH = 3;
 function local_o365_connectioncapability($userid, $mode = 'link', $require = false) {
     $check = $require ? 'require_capability' : 'has_capability';
     $cap = ($mode == 'link') ? 'local/o365:manageconnectionlink' : 'local/o365:manageconnectionunlink';
-    $contextsys = \context_system::instance();
-    $contextuser = \context_user::instance($userid);
+    $contextsys = system::instance();
+    $contextuser = user::instance($userid);
 
     return has_capability($cap, $contextsys) || $check($cap, $contextuser);
 }
@@ -173,11 +176,10 @@ function local_o365_create_manifest_file(): array {
 
     // Task 3: prepare manifest file.
     $manifest = [
-        '$schema' => 'https://developer.microsoft.com/en-us/json-schemas/teams/v1.7/MicrosoftTeams.schema.json',
-        'manifestVersion' => '1.7',
-        'version' => '1.5',
+        '$schema' => 'https://developer.microsoft.com/en-us/json-schemas/teams/v1.25/MicrosoftTeams.schema.json',
+        'manifestVersion' => '1.25',
+        'version' => '1.6.0',
         'id' => $teamsmoodleappexternalid,
-        'packageName' => 'ie.enovation.teams.moodle',
         'developer' => [
             'name' => 'Enovation Solutions',
             'websiteUrl' => 'https://enovation.ie',
@@ -199,6 +201,8 @@ function local_o365_create_manifest_file(): array {
                 'courses from within your teams through tabs.',
         ],
         'accentColor' => '#FF7A00',
+        'defaultInstallScope' => 'team',
+        'supportsChannelFeatures' => 'tier1',
         'configurableTabs' => [
             [
                 'configurationUrl' => $CFG->wwwroot . '/local/o365/teams_tab_configuration.php',
@@ -443,4 +447,36 @@ function local_o365_get_duplicate_emails() {
     $records = $DB->get_records_sql($sql);
 
     return array_keys($records);
+}
+
+/**
+ * Build Bootstrap nav-tabs HTML for navigating between local_o365 settings pages.
+ *
+ * Renders a row of tab links to each settings sub-page, with the current page
+ * marked as active. The Moodle App tab is included only when its feature is enabled.
+ *
+ * @param string $currentpage Section ID of the currently active page.
+ * @return string HTML for the navigation bar.
+ */
+function local_o365_get_settings_nav_html(string $currentpage): string {
+    $pages = [
+        'local_o365' => get_string('settings_header_setup', 'local_o365'),
+        'local_o365_sync' => get_string('settings_header_syncsettings', 'local_o365'),
+        'local_o365_advanced' => get_string('settings_header_advanced', 'local_o365'),
+        'local_o365_sds' => get_string('settings_header_sds', 'local_o365'),
+        'local_o365_teams' => get_string('settings_header_teams', 'local_o365'),
+    ];
+    if (local_o365_show_teams_moodle_app_id_tab()) {
+        $pages['local_o365_moodle_app'] = get_string('settings_header_moodle_app', 'local_o365');
+    }
+
+    $html = html_writer::start_tag('ul', ['class' => 'nav nav-tabs mb-3']);
+    foreach ($pages as $section => $label) {
+        $url = new moodle_url('/admin/settings.php', ['section' => $section]);
+        $linkattrs = ['class' => 'nav-link' . ($section === $currentpage ? ' active' : '')];
+        $html .= html_writer::tag('li', html_writer::link($url, $label, $linkattrs), ['class' => 'nav-item']);
+    }
+    $html .= html_writer::end_tag('ul');
+
+    return $html;
 }

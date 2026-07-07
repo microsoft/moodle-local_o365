@@ -32,7 +32,7 @@ use auth_oidc\event\user_disconnected;
 use auth_oidc\event\user_loggedin;
 use auth_oidc\jwt;
 use backup;
-use context_system;
+use core\context\system;
 use core\event\capability_assigned;
 use core\event\capability_unassigned;
 use core\event\config_log_created;
@@ -59,7 +59,7 @@ use local_o365\task\groupmembershipsync;
 use local_o365\task\processcourserequestapproval;
 use local_o365\task\usergroupmembershipsync;
 use moodle_exception;
-use moodle_url;
+use core\url;
 
 defined('MOODLE_INTERNAL') || die();
 
@@ -84,7 +84,7 @@ class observers {
      */
     public static function handle_oidc_user_authed(user_authed $event): bool {
         require_login();
-        require_capability('moodle/site:config', context_system::instance());
+        require_capability('moodle/site:config', system::instance());
 
         $eventdata = $event->get_data();
 
@@ -109,7 +109,7 @@ class observers {
                     }
                 }
 
-                redirect(new moodle_url('/admin/settings.php?section=local_o365'));
+                redirect(new url('/admin/settings.php?section=local_o365'));
                 break;
 
             case 'addtenant':
@@ -158,7 +158,7 @@ class observers {
                 $tenantid = utils::get_tenant_from_idtoken($idtoken);
                 utils::enableadditionaltenant($tenantid, $domainnames);
 
-                redirect(new moodle_url('/local/o365/acp.php', ['mode' => 'tenants']));
+                redirect(new url('/local/o365/acp.php', ['mode' => 'tenants']));
                 break;
 
             default:

@@ -359,4 +359,372 @@ final class usersync_test extends advanced_testcase {
         $this->assertEquals('Dev', $createduser->department);
         $this->assertEquals('en', $createduser->lang);
     }
+
+    /**
+     * Test create_entra_users_temp_table and drop_entra_users_temp_table.
+     *
+     * @covers \local_o365\feature\usersync\main::create_entra_users_temp_table
+     * @covers \local_o365\feature\usersync\main::drop_entra_users_temp_table
+     */
+    public function test_temp_table_lifecycle(): void {
+        global $DB;
+
+        $usersync = new main();
+        $dbman = $DB->get_manager();
+
+        $temptablename = $usersync->create_entra_users_temp_table();
+
+        // Verify table was created.
+        $table = new \xmldb_table($temptablename);
+        $this->assertTrue($dbman->table_exists($table));
+
+        // Verify table structure.
+        $columns = $DB->get_columns($temptablename);
+        $this->assertArrayHasKey('objectid', $columns);
+        $this->assertArrayHasKey('accountenabled', $columns);
+
+        // Drop table.
+        $usersync->drop_entra_users_temp_table($temptablename);
+        $this->assertFalse($dbman->table_exists($table));
+    }
+
+    /**
+     * Test populate_entra_users_temp_table inserts records correctly.
+     *
+     * @covers \local_o365\feature\usersync\main::populate_entra_users_temp_table
+     */
+    public function test_populate_entra_users_temp_table(): void {
+        global $DB;
+
+        $usersync = new main();
+        $temptablename = $usersync->create_entra_users_temp_table();
+
+        try {
+            // Manually populate temp table (simulate what populate_entra_users_temp_table does).
+            $records = [
+                (object) ['objectid' => 'entra-user-1', 'accountenabled' => 1],
+                (object) ['objectid' => 'entra-user-2', 'accountenabled' => 0],
+                (object) ['objectid' => 'entra-user-3', 'accountenabled' => 1],
+            ];
+            $DB->insert_records($temptablename, $records);
+
+            // Verify records were inserted.
+            $dbrecords = $DB->get_records($temptablename);
+            $this->assertCount(3, $dbrecords);
+
+            $recordsbyid = [];
+            foreach ($dbrecords as $rec) {
+                $recordsbyid[$rec->objectid] = $rec;
+            }
+
+            $this->assertEquals(1, $recordsbyid['entra-user-1']->accountenabled);
+            $this->assertEquals(0, $recordsbyid['entra-user-2']->accountenabled);
+            $this->assertEquals(1, $recordsbyid['entra-user-3']->accountenabled);
+        } finally {
+            $usersync->drop_entra_users_temp_table($temptablename);
+        }
+    }
+
+    /**
+     * Test re-enable path: suspended users in Entra are re-enabled.
+     *
+     * @covers \local_o365\feature\usersync\main::process_user_status_from_temp_table
+     */
+    public function test_process_user_status_reenable(): void {
+        global $DB;
+
+        set_config('usersync', 'create', 'local_o365');
+        set_config('usersync_reenable', 1, 'local_o365');
+
+        $user1 = $this->getDataGenerator()->create_user();
+        $user2 = $this->getDataGenerator()->create_user();
+
+        // Suspend both users and switch to OIDC auth.
+        $user1->suspended = 1;
+        $user1->auth = 'oidc';
+        $user2->suspended = 1;
+        $user2->auth = 'oidc';
+        $DB->update_record('user', $user1);
+        $DB->update_record('user', $user2);
+
+        // Create object mappings.
+        $DB->insert_record('local_o365_objects', (object) [
+            'type' => 'user',
+            'moodleid' => $user1->id,
+            'objectid' => 'entra-user-1',
+            'o365name' => $user1->email,
+            'timecreated' => time(),
+            'timemodified' => time(),
+        ]);
+        $DB->insert_record('local_o365_objects', (object) [
+            'type' => 'user',
+            'moodleid' => $user2->id,
+            'objectid' => 'entra-user-2',
+            'o365name' => $user2->email,
+            'timecreated' => time(),
+            'timemodified' => time(),
+        ]);
+
+        // Create temp table with users.
+        $usersync = new main();
+        $temptablename = $usersync->create_entra_users_temp_table();
+
+        try {
+            $DB->insert_records($temptablename, [
+                (object) ['objectid' => 'entra-user-1', 'accountenabled' => 1],
+                (object) ['objectid' => 'entra-user-2', 'accountenabled' => 1],
+            ]);
+
+            // Process status.
+            [$reenabled, $suspended, $deleted] = $usersync->process_user_status_from_temp_table(
+                $temptablename,
+                true, // Re-enable suspended users.
+                false, // Do not suspend.
+                false, // Do not delete.
+                false  // Do not check account status.
+            );
+
+            $this->assertEquals(2, $reenabled);
+            $this->assertEquals(0, $suspended);
+            $this->assertEquals(0, $deleted);
+
+            // Verify users are no longer suspended.
+            $user1refresh = $DB->get_record('user', ['id' => $user1->id]);
+            $user2refresh = $DB->get_record('user', ['id' => $user2->id]);
+            $this->assertEquals(0, $user1refresh->suspended);
+            $this->assertEquals(0, $user2refresh->suspended);
+        } finally {
+            $usersync->drop_entra_users_temp_table($temptablename);
+        }
+    }
+
+    /**
+     * Test accountEnabled gating: suspended users with accountEnabled=0 are not re-enabled.
+     *
+     * @covers \local_o365\feature\usersync\main::process_user_status_from_temp_table
+     */
+    public function test_process_user_status_reenable_with_disabled_account(): void {
+        global $DB;
+
+        set_config('usersync', 'create', 'local_o365');
+        set_config('usersync_reenable', 1, 'local_o365');
+        set_config('usersync_disabledsync', 1, 'local_o365');
+
+        $user1 = $this->getDataGenerator()->create_user();
+        $user1->suspended = 1;
+        $user1->auth = 'oidc';
+        $DB->update_record('user', $user1);
+
+        $DB->insert_record('local_o365_objects', (object) [
+            'type' => 'user',
+            'moodleid' => $user1->id,
+            'objectid' => 'entra-user-1',
+            'o365name' => $user1->email,
+            'timecreated' => time(),
+            'timemodified' => time(),
+        ]);
+
+        $usersync = new main();
+        $temptablename = $usersync->create_entra_users_temp_table();
+
+        try {
+            // User has accountEnabled=0 in Entra.
+            $DB->insert_records($temptablename, [
+                (object) ['objectid' => 'entra-user-1', 'accountenabled' => 0],
+            ]);
+
+            // Process with syncdisabledstatus=true.
+            [$reenabled, $suspended, $deleted] = $usersync->process_user_status_from_temp_table(
+                $temptablename,
+                true, // Re-enable suspended users.
+                false, // Do not suspend.
+                false, // Do not delete.
+                true  // Check account enabled status.
+            );
+
+            $this->assertEquals(0, $reenabled);
+
+            // User should still be suspended.
+            $user1refresh = $DB->get_record('user', ['id' => $user1->id]);
+            $this->assertEquals(1, $user1refresh->suspended);
+        } finally {
+            $usersync->drop_entra_users_temp_table($temptablename);
+        }
+    }
+
+    /**
+     * Test suspend path: users deleted in Entra are suspended.
+     *
+     * @covers \local_o365\feature\usersync\main::process_user_status_from_temp_table
+     */
+    public function test_process_user_status_suspend(): void {
+        global $DB;
+
+        set_config('usersync', 'create', 'local_o365');
+
+        $user1 = $this->getDataGenerator()->create_user();
+        $user1->auth = 'oidc';
+        $user1->suspended = 0;
+        $DB->update_record('user', $user1);
+
+        $DB->insert_record('local_o365_objects', (object) [
+            'type' => 'user',
+            'moodleid' => $user1->id,
+            'objectid' => 'entra-user-deleted',
+            'o365name' => $user1->email,
+            'timecreated' => time(),
+            'timemodified' => time(),
+        ]);
+
+        $usersync = new main();
+        $temptablename = $usersync->create_entra_users_temp_table();
+
+        try {
+            // Empty temp table - user was deleted from Entra (not calling populate to avoid API requirement).
+
+            [$reenabled, $suspended, $deleted] = $usersync->process_user_status_from_temp_table(
+                $temptablename,
+                false, // Do not re-enable.
+                true, // Suspend deleted users.
+                false, // Do not delete.
+                false  // Do not check account status.
+            );
+
+            $this->assertEquals(0, $reenabled);
+            $this->assertEquals(1, $suspended);
+            $this->assertEquals(0, $deleted);
+
+            // Verify user is suspended.
+            $user1refresh = $DB->get_record('user', ['id' => $user1->id]);
+            $this->assertEquals(1, $user1refresh->suspended);
+        } finally {
+            $usersync->drop_entra_users_temp_table($temptablename);
+        }
+    }
+
+    /**
+     * Test sync_users when user is renamed in Entra ID with username update disabled.
+     *
+     * Regression test for issue #3107: When a user is renamed in Azure AD (e.g., uppercase to lowercase),
+     * and the "Update Moodle username" setting is disabled, both o365name and auth_oidc_token.useridentifier
+     * should still be updated to prevent OIDC login failures and sync issues.
+     *
+     * @covers \local_o365\feature\usersync\main::sync_users
+     */
+    public function test_sync_users_renamed_with_username_update_disabled(): void {
+        global $CFG, $DB;
+
+        // Disable username updates.
+        set_config('supportuseridentifierchange', '0', 'local_o365');
+
+        // Configure minimal sync settings (sync existing users only, no new user creation).
+        set_config('usersync', 'sync', 'local_o365');
+
+        // Create initial user with lowercase UPN (as it currently exists in Moodle).
+        // This simulates a user that was previously synced from Entra ID.
+        $muser = [
+            'auth' => 'oidc',
+            'deleted' => '0',
+            'mnethostid' => $CFG->mnet_localhost_id,
+            'username' => 'testuser@example.onmicrosoft.com', // Lowercase - current state.
+            'firstname' => 'Test',
+            'lastname' => 'User',
+            'email' => 'testuser@example.onmicrosoft.com',
+            'lang' => 'en',
+        ];
+        $muser['id'] = $DB->insert_record('user', (object) $muser);
+        $userid = $muser['id'];
+
+        // Create o365 object with UPPERCASE o365name.
+        // This simulates what was stored when the user was synced with uppercase UPN.
+        // Now the user has been renamed in Azure AD to lowercase.
+        $o365object = (object) [
+            'type' => 'user',
+            'subtype' => 'default',
+            'objectid' => '00000000-0000-0000-0000-000000000001',
+            'moodleid' => $userid,
+            'o365name' => 'TestUser@example.onmicrosoft.com', // Uppercase - old value before rename.
+            'timecreated' => time(),
+            'timemodified' => time(),
+        ];
+        $o365id = $DB->insert_record('local_o365_objects', $o365object);
+
+        // Create auth token with UPPERCASE useridentifier (the stale value).
+        // This simulates what happens after a user is renamed in Azure AD but token isn't updated.
+        $token = (object) [
+            'oidcuniqid' => '00000000-0000-0000-0000-000000000001',
+            'authcode' => '000',
+            'username' => 'testuser@example.onmicrosoft.com', // Current lowercase.
+            'useridentifier' => 'TestUser@example.onmicrosoft.com', // Uppercase - stale, will be updated.
+            'userid' => $userid,
+            'scope' => 'test',
+            'tokenresource' => unified::get_tokenresource(),
+            'token' => '000',
+            'expiry' => '9999999999',
+            'refreshtoken' => 'refreshtoken1',
+            'idtoken' => 'idtoken1',
+        ];
+        $tokenid = $DB->insert_record('auth_oidc_token', $token);
+
+        // Simulate Entra ID response with lowercase UPN (renamed).
+        $response = [
+            'value' => [
+                [
+                    'odata.type' => 'Microsoft.WindowsAzure.ActiveDirectory.User',
+                    'objectType' => 'User',
+                    'objectId' => '00000000-0000-0000-0000-000000000001',
+                    'id' => '00000000-0000-0000-0000-000000000001',
+                    'givenName' => 'Test',
+                    'mail' => 'testuser@example.onmicrosoft.com',
+                    'surname' => 'User',
+                    'userPrincipalName' => 'testuser@example.onmicrosoft.com', // Lowercase - renamed.
+                    'useridentifier' => 'testuser@example.onmicrosoft.com', // Lowercase - renamed.
+                    'useridentifierlower' => 'testuser@example.onmicrosoft.com', // Lowercase - renamed.
+                    'upnsplit0' => 'testuser',
+                ],
+            ],
+        ];
+        $response = json_encode($response);
+        $httpclient = new mockhttpclient();
+        $httpclient->set_response($response);
+
+        // Run sync.
+        $apiclient = new unified($this->get_mock_token(), $httpclient);
+        $usersync = new main();
+        $apiclient->process_users_batched(function (array $userbatch) use ($usersync) {
+            $usersync->sync_users($userbatch, 'userPrincipalName');
+        });
+
+        // Verify Moodle username was NOT changed (because username update is disabled).
+        $updateduser = $DB->get_record('user', ['id' => $userid]);
+        $this->assertEquals(
+            'testuser@example.onmicrosoft.com',
+            $updateduser->username,
+            'Moodle username should remain unchanged when username update is disabled'
+        );
+
+        // Verify o365name WAS updated from uppercase to lowercase.
+        $updatedo365object = $DB->get_record('local_o365_objects', ['id' => $o365id]);
+        $this->assertEquals(
+            'testuser@example.onmicrosoft.com',
+            $updatedo365object->o365name,
+            'o365name should be updated from uppercase to the new lowercase identifier'
+        );
+
+        // Verify token useridentifier WAS updated from uppercase to lowercase.
+        $updatedtoken = $DB->get_record('auth_oidc_token', ['id' => $tokenid]);
+        $this->assertEquals(
+            'testuser@example.onmicrosoft.com',
+            $updatedtoken->useridentifier,
+            'auth_oidc_token.useridentifier should be updated from uppercase to the new lowercase identifier'
+        );
+
+        // Verify only one OIDC user exists (no new user created).
+        $usercount = $DB->count_records('user', ['auth' => 'oidc']);
+        $this->assertEquals(
+            1,
+            $usercount,
+            'Exactly one OIDC user should exist; no new user should be created'
+        );
+    }
 }

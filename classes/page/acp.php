@@ -47,7 +47,7 @@ use local_o365\form\usermatch;
 use local_o365\healthcheck\healthcheckinterface;
 use local_o365\utils;
 use moodle_exception;
-use moodle_url;
+use core\url;
 use stdClass;
 
 defined('MOODLE_INTERNAL') || die();
@@ -76,19 +76,19 @@ class acp extends base {
     protected function add_navbar() {
         global $PAGE;
 
-        $PAGE->navbar->add(get_string('administrationsite'), new moodle_url('/admin/search.php'));
-        $PAGE->navbar->add(get_string('plugins', 'admin'), new moodle_url('/admin/category.php', ['category' => 'modules']));
-        $PAGE->navbar->add(get_string('localplugins'), new moodle_url('/admin/category.php', ['category' => 'localplugins']));
+        $PAGE->navbar->add(get_string('administrationsite'), new url('/admin/search.php'));
+        $PAGE->navbar->add(get_string('plugins', 'admin'), new url('/admin/category.php', ['category' => 'modules']));
+        $PAGE->navbar->add(get_string('localplugins'), new url('/admin/category.php', ['category' => 'localplugins']));
         $PAGE->navbar->add(
             get_string('pluginname', 'local_o365'),
-            new moodle_url('/admin/settings.php', ['section' => 'local_o365'])
+            new url('/admin/settings.php', ['section' => 'local_o365'])
         );
 
         $mode = optional_param('mode', '', PARAM_TEXT);
         $params = ['section' => 'local_o365'];
         switch ($mode) {
             case 'coursesynccustom':
-                $params['s_local_o365_tabs'] = LOCAL_O365_TAB_SYNC;
+                $params['section'] = 'local_o365_sync';
                 $this->title = get_string('settings_header_syncsettings', 'local_o365');
                 break;
             case 'healthcheck':
@@ -99,11 +99,11 @@ class acp extends base {
             case 'maintenance_resyncgroupusers':
             case 'maintenance_cleandeltatoken':
             case 'tenants':
-                $params['s_local_o365_tabs'] = LOCAL_O365_TAB_ADVANCED;
+                $params['section'] = 'local_o365_advanced';
                 break;
         }
 
-        $PAGE->navbar->add($this->title, new moodle_url('/admin/settings.php', $params));
+        $PAGE->navbar->add($this->title, new url('/admin/settings.php', $params));
 
         switch ($mode) {
             case 'maintenance_recreatedeletedgroups':
@@ -111,7 +111,7 @@ class acp extends base {
             case 'maintenance_cleandeltatoken':
                 $PAGE->navbar->add(
                     get_string('acp_maintenance', 'local_o365'),
-                    new moodle_url('/local/o365/acp.php', ['mode' => 'maintenance'])
+                    new url('/local/o365/acp.php', ['mode' => 'maintenance'])
                 );
                 break;
         }
@@ -161,7 +161,7 @@ class acp extends base {
         $this->set_title(get_string('acp_tenants_title', 'local_o365'));
         $PAGE->navbar->add(
             get_string('acp_tenants_title', 'local_o365'),
-            new moodle_url($this->url, ['mode' => 'tenants'])
+            new url($this->url, ['mode' => 'tenants'])
         );
 
         $this->standard_header();
@@ -186,7 +186,7 @@ class acp extends base {
         echo html_writer::empty_tag('br');
 
         $addtenantstr = get_string('acp_tenants_add', 'local_o365');
-        $addtenanturl = new moodle_url('/local/o365/acp.php', ['mode' => 'tenantsadd']);
+        $addtenanturl = new url('/local/o365/acp.php', ['mode' => 'tenantsadd']);
         echo html_writer::link($addtenanturl, $addtenantstr, ['class' => 'btn btn-primary']);
 
         $configuredtenants = get_config('local_o365', 'multitenants');
@@ -208,7 +208,7 @@ class acp extends base {
                     't' => base64_encode($tenantid),
                     'sesskey' => sesskey(),
                 ];
-                $revokeurl = new moodle_url('/local/o365/acp.php', $revokeurlparams);
+                $revokeurl = new url('/local/o365/acp.php', $revokeurlparams);
                 $table->data[] = [
                     implode(', ', $tenantdomains),
                     html_writer::link($revokeurl, $revokeaccessstr),
@@ -247,7 +247,7 @@ class acp extends base {
                     't' => base64_encode($configuredtenant),
                     'sesskey' => sesskey(),
                 ];
-                $deleteurl = new moodle_url('/local/o365/acp.php', $deleturlparams);
+                $deleteurl = new url('/local/o365/acp.php', $deleturlparams);
                 $table->data[] = [
                     $configuredtenant,
                     html_writer::link($deleteurl, get_string('acp_tenants_delete', 'local_o365')),
@@ -278,7 +278,7 @@ class acp extends base {
         echo html_writer::div(get_string('acp_tenantsadd_desc', 'local_o365'));
         echo html_writer::empty_tag('br');
         $addtenantstr = get_string('acp_tenantsadd_linktext', 'local_o365');
-        $addtenanturl = new moodle_url('/local/o365/acp.php', ['mode' => 'tenantsaddgo']);
+        $addtenanturl = new url('/local/o365/acp.php', ['mode' => 'tenantsaddgo']);
         echo html_writer::link($addtenanturl, $addtenantstr, ['class' => 'btn btn-primary']);
 
         $this->standard_footer();
@@ -292,7 +292,7 @@ class acp extends base {
         $tenantid = required_param('t', PARAM_TEXT);
         $tenantid = (string)base64_decode($tenantid);
         utils::disableadditionaltenant($tenantid);
-        redirect(new moodle_url('/local/o365/acp.php', ['mode' => 'tenants']));
+        redirect(new url('/local/o365/acp.php', ['mode' => 'tenants']));
     }
 
     /**
@@ -305,7 +305,7 @@ class acp extends base {
         $tenant = required_param('t', PARAM_TEXT);
         $tenant = (string) base64_decode($tenant);
         utils::disableadditionaltenant($tenant);
-        redirect(new moodle_url('/local/o365/acp.php', ['mode' => 'tenants']));
+        redirect(new url('/local/o365/acp.php', ['mode' => 'tenants']));
     }
 
     /**
@@ -334,7 +334,7 @@ class acp extends base {
         $this->set_title(get_string('acp_healthcheck', 'local_o365'));
         $PAGE->navbar->add(
             get_string('acp_healthcheck', 'local_o365'),
-            new moodle_url($this->url, ['mode' => 'healthcheck'])
+            new url($this->url, ['mode' => 'healthcheck'])
         );
 
         $this->standard_header();
@@ -418,7 +418,7 @@ class acp extends base {
 
         $PAGE->navbar->add(
             get_string('acp_usermatch', 'local_o365'),
-            new moodle_url($this->url, ['mode' => 'usermatch'])
+            new url($this->url, ['mode' => 'usermatch'])
         );
 
         $errors = [];
@@ -476,7 +476,7 @@ class acp extends base {
                 $SESSION->o365matcherrors = $errors;
             }
 
-            redirect(new moodle_url('/local/o365/acp.php', ['mode' => 'usermatch']));
+            redirect(new url('/local/o365/acp.php', ['mode' => 'usermatch']));
             die();
         }
 
@@ -505,7 +505,7 @@ class acp extends base {
         if ($matchqueuelength > 0) {
             echo html_writer::start_tag('div', ['class' => 'local_o365_matchqueuetoolbar']);
 
-            $clearurl = new moodle_url('/local/o365/acp.php', ['mode' => 'usermatchclear']);
+            $clearurl = new url('/local/o365/acp.php', ['mode' => 'usermatchclear']);
             $clearurl = $clearurl->out();
 
             // Clear successful button.
@@ -615,110 +615,35 @@ class acp extends base {
 
         $PAGE->navbar->add(
             get_string('acp_coursesynccustom', 'local_o365'),
-            new moodle_url($this->url, ['mode' => 'coursesynccustom'])
+            new url($this->url, ['mode' => 'coursesynccustom'])
         );
 
-        $totalcount = 0;
-        $perpage = 20;
-
-        $curpage = optional_param('page', 0, PARAM_INT);
-        $sort = optional_param('sort', '', PARAM_ALPHA);
-        $search = optional_param('search', '', PARAM_TEXT);
-        $sortdir = strtolower(optional_param('sortdir', 'asc', PARAM_ALPHA));
-
-        $headers = [
-            'fullname' => get_string('fullnamecourse'),
-            'shortname' => get_string('shortnamecourse'),
-            'visible' => get_string('coursevisibility'),
-        ];
-        if (empty($sort) || !isset($headers[$sort])) {
-            $sort = 'fullname';
-        }
-
-        if (!in_array($sortdir, ['asc', 'desc'], true)) {
-            $sortdir = 'asc';
-        }
-
-        $table = new html_table();
-        foreach ($headers as $hkey => $desc) {
-            $diffsortdir = ($sort === $hkey && $sortdir === 'asc') ? 'desc' : 'asc';
-            $linkattrs = ['mode' => 'coursesynccustom', 'sort' => $hkey, 'sortdir' => $diffsortdir];
-            $link = new moodle_url('/local/o365/acp.php', $linkattrs);
-
-            if ($sort === $hkey) {
-                $desc .= ' ' . $OUTPUT->pix_icon('t/' . 'sort_' . $sortdir, 'sort');
-            }
-
-            $table->head[] = html_writer::link($link, $desc);
-        }
-
-        $table->head[] = get_string('acp_coursesynccustom_enabled', 'local_o365');
-
-        $limitfrom = $curpage * $perpage;
-        $coursesid = [];
-
-        if (empty($search)) {
-            $sortdir = 1;
-            if ($sortdir == 'desc') {
-                $sortdir = -1;
-            }
-
-            $options = ['recursive' => true, 'sort' => [$sort => $sortdir], 'offset' => $limitfrom, 'limit' => $perpage];
-            $topcat = core_course_category::get(0);
-            $courses = $topcat->get_courses($options);
-            $totalcount = $topcat->get_courses_count($options);
-        } else {
-            $searchar = explode(' ', $search);
-            $courses = get_courses_search($searchar, 'c.' . $sort . ' ' . $sortdir, $curpage, $perpage, $totalcount);
-        }
-
-        $sdscourseids = \local_o365\feature\sds\utils::get_sds_course_ids();
-
         $synchiddencourses = get_config('local_o365', 'synchiddencourses');
+        $coursesyncmode = get_config('local_o365', 'coursesync');
+        $isallfeaturesenabledmode = ($coursesyncmode === 'onall');
+        $isdisabledmode = ($coursesyncmode === 'off');
+        $iseditable = !$isallfeaturesenabledmode && !$isdisabledmode;
 
-        foreach ($courses as $course) {
-            if ($course->id == SITEID) {
-                continue;
-            }
-
-            $coursesid[] = $course->id;
-            $isenabled = \local_o365\feature\coursesync\utils::is_course_sync_enabled($course->id);
-            $enabledname = 'course_' . $course->id . '_enabled';
-
-            $enablecheckboxattrs = ['class' => 'course_sync_enabled',
-                'onchange' => 'local_o365_set_coursesync(\'' . $course->id . '\', $(this).prop(\'checked\'), $(this))'];
-
-            $sdscoursetext = '';
-
-            if (in_array($course->id, $sdscourseids)) {
-                $enablecheckboxattrs['disabled'] = 'disabled';
-                $sdscoursetext = get_string('acp_coursesynccustom_sds_course', 'local_o365');
-            }
-
-            $courseurl = new moodle_url('/course/view.php', ['id' => $course->id]);
-
-            if ($course->visible) {
-                $visiblestr = get_string('show');
-            } else {
-                $visiblestr = get_string('hide');
-            }
-
-            $rowdata = [
-                html_writer::link($courseurl, $course->fullname),
-                $course->shortname,
-                $visiblestr,
-                html_writer::checkbox($enabledname, 1, $isenabled, '', $enablecheckboxattrs) . ' ' . $sdscoursetext,
-            ];
-            $table->data[] = $rowdata;
-        }
+        // Build empty table for DataTables server-side mode.
+        $table = new html_table();
+        $table->id = 'coursesynccustom_table';
+        $table->attributes = ['class' => 'stripe hover', 'style' => 'width: 100%;'];
+        $table->head = [
+            get_string('fullnamecourse'),
+            get_string('shortnamecourse'),
+            get_string('coursevisibility'),
+            get_string('acp_coursesynccustom_enabled', 'local_o365'),
+        ];
+        $table->data = [];
 
         $PAGE->requires->jquery();
+        $PAGE->requires->css('/local/o365/lib/datatables/css/jquery.dataTables.min.css');
         $this->standard_header();
 
-        $endpoint = new moodle_url('/local/o365/acp.php', ['mode' => 'coursesynccustom_change', 'sesskey' => sesskey()]);
-        $custompageurl = new moodle_url('/local/o365/acp.php', ['mode' => 'coursesynccustom']);
+        $endpoint = new url('/local/o365/acp.php', ['mode' => 'coursesynccustom_change', 'sesskey' => sesskey()]);
+        $custompageurl = new url('/local/o365/acp.php', ['mode' => 'coursesynccustom']);
         $allchangeendpoint =
-            new moodle_url('/local/o365/acp.php', ['mode' => 'coursesynccustom_allchange', 'sesskey' => sesskey()]);
+            new url('/local/o365/acp.php', ['mode' => 'coursesynccustom_allchange', 'sesskey' => sesskey()]);
 
         $js = '
 var local_o365_coursesync_bulk_set_enable = function(state) {
@@ -726,16 +651,19 @@ var local_o365_coursesync_bulk_set_enable = function(state) {
     $("input.course_sync_enabled:not(:disabled)").prop("checked", enabled);
 };
 
-var local_o365_coursesync_coursesid = ' . json_encode($coursesid) . ';
-
 var local_o365_coursesync_save = function() {
     var coursedata = {};
-    for (var i = 0; i < local_o365_coursesync_coursesid.length; i++) {
-        var courseid = local_o365_coursesync_coursesid[i];
-        var enabled = $("input[name=\'course_"+courseid+"_enabled\']").is(\':checked\');
-        var syncstatus = {enabled: enabled};
-        coursedata[courseid] = syncstatus;
-    }
+    // Collect all visible course checkboxes from the current DataTables page
+    $("input.course_sync_enabled").each(function() {
+        var name = $(this).attr("name");
+        var match = name.match(/course_(\d+)_enabled/);
+        if (match) {
+            var courseid = match[1];
+            var enabled = $(this).is(\':checked\');
+            var syncstatus = {enabled: enabled};
+            coursedata[courseid] = syncstatus;
+        }
+    });
     // Send data to server.
     $.ajax({
         url: \'' . $endpoint->out(false) . '\',
@@ -782,22 +710,43 @@ var local_o365_coursesync_all_set_feature = function(state) {
         echo $coursesynccustomisesettingheader->output_html(null);
 
         // Option to enable sync by default for new courses.
-        $enablefornewcoursesetting = new admin_setting_configcheckbox(
-            'local_o365/sync_new_course',
-            get_string('acp_coursesynccustom_new_course', 'local_o365'),
-            get_string('acp_coursesynccustom_new_course_desc', 'local_o365'),
-            '0'
-        );
-        echo $enablefornewcoursesetting->output_html(get_config('local_o365', 'sync_new_course'));
+        if ($iseditable) {
+            $enablefornewcoursesetting = new admin_setting_configcheckbox(
+                'local_o365/sync_new_course',
+                get_string('acp_coursesynccustom_new_course', 'local_o365'),
+                get_string('acp_coursesynccustom_new_course_desc', 'local_o365'),
+                '0'
+            );
+            echo $enablefornewcoursesetting->output_html(get_config('local_o365', 'sync_new_course'));
+        } else {
+            $syncnewcoursevalue = get_config('local_o365', 'sync_new_course');
+            echo html_writer::start_tag('div', ['class' => 'admin-setting']);
+            echo html_writer::tag('h3', get_string('acp_coursesynccustom_new_course', 'local_o365'));
+            echo html_writer::tag('p', get_string('acp_coursesynccustom_new_course_desc', 'local_o365'), ['class' => 'form-text']);
+            $synctext = $syncnewcoursevalue ? get_string('yes') : get_string('no');
+            echo html_writer::tag('p', $synctext, ['class' => 'form-control-static']);
+            echo html_writer::end_tag('div');
+        }
 
         // Allow course sync controlled at course level.
-        $controlpercoursesetting = new admin_setting_configcheckbox(
-            'local_o365/course_sync_per_course',
-            get_string('acp_coursesynccustom_controlled_per_course', 'local_o365'),
-            get_string('acp_coursesynccustom_controlled_per_course_desc', 'local_o365'),
-            '0'
-        );
-        echo $controlpercoursesetting->output_html(get_config('local_o365', 'course_sync_per_course'));
+        if ($iseditable) {
+            $controlpercoursesetting = new admin_setting_configcheckbox(
+                'local_o365/course_sync_per_course',
+                get_string('acp_coursesynccustom_controlled_per_course', 'local_o365'),
+                get_string('acp_coursesynccustom_controlled_per_course_desc', 'local_o365'),
+                '0'
+            );
+            echo $controlpercoursesetting->output_html(get_config('local_o365', 'course_sync_per_course'));
+        } else {
+            $percoursesyncvalue = get_config('local_o365', 'course_sync_per_course');
+            echo html_writer::start_tag('div', ['class' => 'admin-setting']);
+            echo html_writer::tag('h3', get_string('acp_coursesynccustom_controlled_per_course', 'local_o365'));
+            $percoursedesc = get_string('acp_coursesynccustom_controlled_per_course_desc', 'local_o365');
+            echo html_writer::tag('p', $percoursedesc, ['class' => 'form-text']);
+            $percoursetext = $percoursesyncvalue ? get_string('yes') : get_string('no');
+            echo html_writer::tag('p', $percoursetext, ['class' => 'form-control-static']);
+            echo html_writer::end_tag('div');
+        }
 
         echo html_writer::empty_tag('hr');
 
@@ -806,50 +755,39 @@ var local_o365_coursesync_all_set_feature = function(state) {
 
         // Option to enable all sync features on all pages.
         echo html_writer::start_tag('div', ['style' => 'display: block; margin: 1rem']);
+        $enableallattrs = $iseditable ? ['onclick' => 'local_o365_coursesync_all_set_feature(1)'] : ['disabled' => 'disabled'];
         echo html_writer::tag(
             'button',
             get_string('acp_coursesynccustom_enable_all', 'local_o365'),
-            ['onclick' => 'local_o365_coursesync_all_set_feature(1)']
+            $enableallattrs
         );
         echo html_writer::tag('span', '&nbsp;');
+        $disableallattrs = $iseditable ? ['onclick' => 'local_o365_coursesync_all_set_feature(0)'] : ['disabled' => 'disabled'];
         echo html_writer::tag(
             'button',
             get_string('acp_coursesynccustom_disable_all', 'local_o365'),
-            ['onclick' => 'local_o365_coursesync_all_set_feature(0)']
+            $disableallattrs
         );
         echo html_writer::end_tag('div');
 
         // Option to enable sync features on this page only.
         echo html_writer::start_tag('div', ['style' => 'display: block;margin: 1rem']);
+        $bulkenableattrs = $iseditable ? ['onclick' => 'local_o365_coursesync_bulk_set_enable(1)'] : ['disabled' => 'disabled'];
         echo html_writer::tag(
             'button',
             get_string('acp_coursesynccustom_bulk_enable', 'local_o365'),
-            ['onclick' => 'local_o365_coursesync_bulk_set_enable(1)']
+            $bulkenableattrs
         );
         echo html_writer::tag('span', '&nbsp;');
+        $bulkdisableattrs = $iseditable ? ['onclick' => 'local_o365_coursesync_bulk_set_enable(0)'] : ['disabled' => 'disabled'];
         echo html_writer::tag(
             'button',
             get_string('acp_coursesynccustom_bulk_disable', 'local_o365'),
-            ['onclick' => 'local_o365_coursesync_bulk_set_enable(0)']
+            $bulkdisableattrs
         );
         echo html_writer::end_tag('div');
 
         echo html_writer::empty_tag('hr');
-
-        // Search form.
-        echo html_writer::tag('h3', get_string('search'));
-        echo html_writer::start_tag('form', ['id' => 'coursesearchform', 'method' => 'get']);
-        echo html_writer::start_tag('fieldset', ['class' => 'coursesearchbox invisiblefieldset']);
-        echo html_writer::empty_tag('input', ['type' => 'hidden', 'name' => 'mode', 'value' => 'coursesynccustom']);
-        echo html_writer::empty_tag(
-            'input',
-            ['type' => 'text', 'id' => 'coursesearchbox', 'size' => 30, 'name' => 'search', 'value' => s($search)]
-        );
-        echo html_writer::empty_tag('input', ['type' => 'submit', 'value' => get_string('go')]);
-        echo html_writer::div(html_writer::tag('strong', get_string('acp_coursesynccustom_searchwarning', 'local_o365')));
-        echo html_writer::end_tag('fieldset');
-        echo html_writer::end_tag('form');
-        echo html_writer::empty_tag('br');
 
         echo html_writer::tag('h5', get_string('courses'));
 
@@ -857,22 +795,158 @@ var local_o365_coursesync_all_set_feature = function(state) {
             echo html_writer::tag('p', get_string('acp_coursesync_hidden_course_note', 'local_o365'));
         }
 
+        // Output the table.
         echo html_writer::table($table);
+
+        // Initialize DataTables via AMD module.
+        $ajaxendpoint = new url('/local/o365/acp.php', ['mode' => 'coursesynccustom_ajax']);
+        $PAGE->requires->js_call_amd('local_o365/coursesynccustom_datatables', 'init', [$ajaxendpoint->out(false), $iseditable]);
+
         echo html_writer::tag(
             'p',
             get_string('acp_coursesynccustom_savemessage', 'local_o365'),
             ['id' => 'acp_coursesynccustom_savemessage', 'style' => 'display: none; font-weight: bold; color: red']
         );
-        echo html_writer::tag(
-            'button',
-            get_string('savechanges'),
-            ['class' => 'buttonsbar', 'onclick' => 'local_o365_coursesync_save()']
-        );
 
-        $searchtext = optional_param('search', '', PARAM_TEXT);
-        $cururl = new moodle_url('/local/o365/acp.php', ['mode' => 'coursesynccustom', 'search' => $searchtext]);
-        echo $OUTPUT->paging_bar($totalcount, $curpage, $perpage, $cururl);
+        if (!$iseditable) {
+            if ($isdisabledmode) {
+                echo html_writer::tag(
+                    'p',
+                    get_string('acp_coursesynccustom_disabled_notice', 'local_o365'),
+                    ['style' => 'font-weight: bold; color: blue; margin: 1rem 0;']
+                );
+            } else if ($isallfeaturesenabledmode) {
+                echo html_writer::tag(
+                    'p',
+                    get_string('acp_coursesynccustom_all_enabled_notice', 'local_o365'),
+                    ['style' => 'font-weight: bold; color: blue; margin: 1rem 0;']
+                );
+            }
+            echo html_writer::tag(
+                'button',
+                get_string('savechanges'),
+                ['class' => 'buttonsbar', 'disabled' => 'disabled']
+            );
+        } else {
+            echo html_writer::tag(
+                'button',
+                get_string('savechanges'),
+                ['class' => 'buttonsbar', 'onclick' => 'local_o365_coursesync_save()']
+            );
+        }
+
         $this->standard_footer();
+    }
+
+    /**
+     * AJAX endpoint for DataTables server-side course loading.
+     *
+     * Returns paginated, filtered, and sorted course data in DataTables format.
+     */
+    public function mode_coursesynccustom_ajax() {
+        global $CFG;
+
+        // Get DataTables parameters from $_GET (Moodle's optional_param doesn't handle nested arrays).
+        $draw = isset($_GET['draw']) ? (int)$_GET['draw'] : 1;
+        $start = isset($_GET['start']) ? (int)$_GET['start'] : 0;
+        $length = isset($_GET['length']) ? (int)$_GET['length'] : 50;
+        $searchvalue = isset($_GET['search']['value']) ? trim($_GET['search']['value']) : '';
+        $ordercolumn = isset($_GET['order'][0]['column']) ? (int)$_GET['order'][0]['column'] : 0;
+        $orderdir = isset($_GET['order'][0]['dir']) ? strtolower($_GET['order'][0]['dir']) : 'asc';
+
+        // Validate sort direction.
+        $orderdir = ($orderdir === 'desc') ? 'DESC' : 'ASC';
+
+        // Get all courses (recursive).
+        $topcat = core_course_category::get(0);
+        $options = ['recursive' => true];
+        $allcourses = $topcat->get_courses($options);
+
+        $sdscourseids = \local_o365\feature\sds\utils::get_sds_course_ids();
+
+        // Filter and search.
+        $filteredcourses = [];
+        foreach ($allcourses as $course) {
+            if ($course->id == SITEID) {
+                continue;
+            }
+
+            // Apply search filter (search in fullname and shortname).
+            if (!empty($searchvalue)) {
+                $fullname = strtolower($course->fullname);
+                $shortname = strtolower($course->shortname);
+                $search = strtolower($searchvalue);
+
+                if (strpos($fullname, $search) === false && strpos($shortname, $search) === false) {
+                    continue;
+                }
+            }
+
+            $filteredcourses[] = $course;
+        }
+
+        $recordsfiltered = count($filteredcourses);
+        $recordstotal = count($allcourses) - 1; // Exclude SITEID.
+
+        // Sort.
+        usort($filteredcourses, function ($a, $b) use ($ordercolumn, $orderdir) {
+            $result = 0;
+            switch ($ordercolumn) {
+                case 0: // Course full name.
+                    $result = strcasecmp($a->fullname, $b->fullname);
+                    break;
+                case 1: // Course short name.
+                    $result = strcasecmp($a->shortname, $b->shortname);
+                    break;
+                case 2: // Course visibility.
+                    $avis = $a->visible ? 1 : 0;
+                    $bvis = $b->visible ? 1 : 0;
+                    $result = $avis - $bvis;
+                    break;
+            }
+            return ($orderdir === 'DESC') ? -$result : $result;
+        });
+
+        // Paginate.
+        $paginatedcourses = array_slice($filteredcourses, $start, $length);
+
+        // Build response data.
+        $data = [];
+        foreach ($paginatedcourses as $course) {
+            $isenabled = \local_o365\feature\coursesync\utils::is_course_sync_enabled($course->id);
+            $enabledname = 'course_' . $course->id . '_enabled';
+
+            $enablecheckboxattrs = [
+                'class' => 'course_sync_enabled',
+                'onchange' => 'local_o365_set_coursesync(\'' . $course->id . '\', $(this).prop(\'checked\'), $(this))',
+            ];
+
+            $sdscoursetext = '';
+            if (in_array($course->id, $sdscourseids)) {
+                $enablecheckboxattrs['disabled'] = 'disabled';
+                $sdscoursetext = get_string('acp_coursesynccustom_sds_course', 'local_o365');
+            }
+
+            $courseurl = new url('/course/view.php', ['id' => $course->id]);
+            $visiblestr = $course->visible ? get_string('show') : get_string('hide');
+
+            $data[] = [
+                html_writer::link($courseurl, $course->fullname),
+                $course->shortname,
+                $visiblestr,
+                html_writer::checkbox($enabledname, 1, $isenabled, '', $enablecheckboxattrs) . ' ' . $sdscoursetext,
+            ];
+        }
+
+        // Return DataTables format JSON.
+        header('Content-Type: application/json');
+        echo json_encode([
+            'draw' => $draw,
+            'recordsTotal' => $recordstotal,
+            'recordsFiltered' => $recordsfiltered,
+            'data' => $data,
+        ]);
+        die;
     }
 
     /**
@@ -956,13 +1030,13 @@ var local_o365_coursesync_all_set_feature = function(state) {
 
         $PAGE->navbar->add(
             get_string('acp_teamconnections', 'local_o365'),
-            new moodle_url($this->url, ['mode' => 'teamconnections'])
+            new url($this->url, ['mode' => 'teamconnections'])
         );
 
         // Check settings.
         $coursesyncsetting = get_config('local_o365', 'coursesync');
         if ($coursesyncsetting === 'off') {
-            $redirecturl = new moodle_url('/admin/settings.php', ['section' => 'local_o365', 's_local_o365_tabs' => 1]);
+            $redirecturl = new url('/admin/settings.php', ['section' => 'local_o365_sync']);
             redirect($redirecturl, get_string('acp_teamconnections_sync_disabled', 'local_o365'));
         }
 
@@ -987,7 +1061,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
         foreach ($headers as $hkey => $desc) {
             $diffsortdir = ($sort === $hkey && $sortdir === 'asc') ? 'desc' : 'asc';
             $linkattrs = ['mode' => 'teamconnections', 'sort' => $hkey, 'sortdir' => $diffsortdir];
-            $link = new moodle_url('/local/o365/acp.php', $linkattrs);
+            $link = new url('/local/o365/acp.php', $linkattrs);
 
             if ($sort === $hkey) {
                 $desc .= ' ' . $OUTPUT->pix_icon('t/sort_' . $sortdir, 'sort');
@@ -1051,7 +1125,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
                                 ['type' => 'sdssection', 'subtype' => 'course', 'moodleid' => $course->id]
                             )
                         ) {
-                            $updateurl = new moodle_url(
+                            $updateurl = new url(
                                 '/local/o365/acp.php',
                                 ['mode' => 'teamconnections_update', 'course' => $course->id, 'sesskey' => sesskey()]
                             );
@@ -1073,7 +1147,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
                     if (is_array($metadata) && !empty($metadata['softdelete'])) {
                         // Deleted group connection.
                         $existingconnection = get_string('acp_teamconnections_not_connected', 'local_o365');
-                        $connecturl = new moodle_url(
+                        $connecturl = new url(
                             '/local/o365/acp.php',
                             ['mode' => 'teamconnections_connect', 'course' => $course->id, 'sesskey' => sesskey()]
                         );
@@ -1095,7 +1169,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
                                 ['type' => 'sdssection', 'subtype' => 'course', 'moodleid' => $course->id]
                             )
                         ) {
-                            $updateurl = new moodle_url(
+                            $updateurl = new url(
                                 '/local/o365/acp.php',
                                 ['mode' => 'teamconnections_update', 'course' => $course->id, 'sesskey' => sesskey()]
                             );
@@ -1118,7 +1192,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
                                 ['type' => 'sdssection', 'subtype' => 'course', 'moodleid' => $course->id]
                             )
                         ) {
-                            $connecturl = new moodle_url(
+                            $connecturl = new url(
                                 '/local/o365/acp.php',
                                 ['mode' => 'teamconnections_connect', 'course' => $course->id, 'sesskey' => sesskey()]
                             );
@@ -1132,7 +1206,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
 
                 $teamownerids = \local_o365\feature\coursesync\utils::get_team_owner_user_ids_by_course_id($course->id);
                 if (!empty($teamownerids)) {
-                    $connecturl = new moodle_url(
+                    $connecturl = new url(
                         '/local/o365/acp.php',
                         ['mode' => 'teamconnections_connect', 'course' => $course->id, 'sesskey' => sesskey()]
                     );
@@ -1146,7 +1220,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
 
             $actionsfield = implode('<br/>', $actions);
 
-            $courseurl = new moodle_url('/course/view.php', ['id' => $course->id]);
+            $courseurl = new url('/course/view.php', ['id' => $course->id]);
 
             $rowdata = [html_writer::link($courseurl, $course->fullname), $course->shortname, $existingconnection, $actionsfield];
 
@@ -1158,7 +1232,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
 
         // Cache status.
         $teamscacheupdated = get_config('local_o365', 'teamscacheupdated');
-        $updatecacheurl = new moodle_url('/local/o365/acp.php', ['mode' => 'teamconnections_update_cache', 'sesskey' => sesskey()]);
+        $updatecacheurl = new url('/local/o365/acp.php', ['mode' => 'teamconnections_update_cache', 'sesskey' => sesskey()]);
         $linkparams = ['updateurl' => $updatecacheurl->out()];
         if ($teamscacheupdated) {
             $linkparams['lastupdated'] = userdate($teamscacheupdated);
@@ -1186,7 +1260,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
         echo html_writer::table($table);
 
         $searchtext = optional_param('search', '', PARAM_TEXT);
-        $cururl = new moodle_url('/local/o365/acp.php', ['mode' => 'teamconnections', 'search' => $searchtext]);
+        $cururl = new url('/local/o365/acp.php', ['mode' => 'teamconnections', 'search' => $searchtext]);
         echo $OUTPUT->paging_bar($totalcount, $curpage, $perpage, $cururl);
 
         $this->standard_footer();
@@ -1203,7 +1277,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
         // by the 5-minute rate limit that applies to automated task runs.
         \local_o365\utils::update_groups_cache($graphclient, 0, true);
 
-        $redirecturl = new moodle_url('/local/o365/acp.php', ['mode' => 'teamconnections']);
+        $redirecturl = new url('/local/o365/acp.php', ['mode' => 'teamconnections']);
         redirect($redirecturl, get_string('acp_teamconnections_teams_cache_updated', 'local_o365'));
     }
 
@@ -1220,7 +1294,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
         $courseid = required_param('course', PARAM_INT);
         confirm_sesskey();
 
-        $redirecturl = new moodle_url('/local/o365/acp.php', ['mode' => 'teamconnections']);
+        $redirecturl = new url('/local/o365/acp.php', ['mode' => 'teamconnections']);
 
         if (utils::is_connected() !== true) {
             throw new moodle_exception('acp_teamconnections_exception_not_configured', 'local_o365', $redirecturl);
@@ -1231,7 +1305,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
         }
 
         if ($DB->record_exists('local_o365_objects', ['type' => 'group', 'subtype' => 'course', 'moodleid' => $courseid])) {
-            $updateurl = new moodle_url(
+            $updateurl = new url(
                 '/local/o365/acp.php',
                 ['mode' => 'teamconnections_update', 'course' => $courseid, 'sesskey' => sesskey()]
             );
@@ -1241,7 +1315,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
         [$teamsoptions, $unused] = \local_o365\feature\coursesync\utils::get_matching_team_options();
 
         $urlparams = ['mode' => 'teamconnections_connect', 'course' => $courseid];
-        $connectteamsurl = new moodle_url('/local/o365/acp.php', $urlparams);
+        $connectteamsurl = new url('/local/o365/acp.php', $urlparams);
         $customdata = ['course' => $courseid, 'teamsoptions' => $teamsoptions];
         $mform = new teamsconnection($connectteamsurl, $customdata);
 
@@ -1331,7 +1405,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
 
             redirect($redirecturl, get_string('acp_teamconnections_course_connected', 'local_o365'));
         } else {
-            $url = new moodle_url($this->url, ['mode' => 'teamconnections']);
+            $url = new url($this->url, ['mode' => 'teamconnections']);
             $PAGE->navbar->add(get_string('acp_teamconnections', 'local_o365'), $url);
             $PAGE->requires->jquery();
             $this->standard_header();
@@ -1359,7 +1433,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
         $courseid = required_param('course', PARAM_INT);
         confirm_sesskey();
 
-        $redirecturl = new moodle_url('/local/o365/acp.php', ['mode' => 'teamconnections']);
+        $redirecturl = new url('/local/o365/acp.php', ['mode' => 'teamconnections']);
 
         if (utils::is_connected() !== true) {
             throw new moodle_exception('acp_teamconnections_exception_not_configured', 'local_o365', $redirecturl);
@@ -1375,7 +1449,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
                 ['type' => 'group', 'subtype' => 'course', 'moodleid' => $courseid]
             )
         ) {
-            $connecturl = new moodle_url(
+            $connecturl = new url(
                 '/local/o365/acp.php',
                 ['mode' => 'teamconnections_connect', 'course' => $courseid, 'sesskey' => sesskey()]
             );
@@ -1387,7 +1461,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
         );
 
         $urlparams = ['mode' => 'teamconnections_update', 'course' => $courseid];
-        $updateconnectionurl = new moodle_url('/local/o365/acp.php', $urlparams);
+        $updateconnectionurl = new url('/local/o365/acp.php', $urlparams);
         $customdata = ['course' => $courseid, 'teamsoptions' => $teamsoptions];
         $mform = new teamsconnection($updateconnectionurl, $customdata);
         $mform->set_data(['team' => $connectedteamrecordid]);
@@ -1477,7 +1551,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
 
             redirect($redirecturl, get_string('acp_teamconnections_course_connected', 'local_o365'));
         } else {
-            $url = new moodle_url($this->url, ['mode' => 'teamconnections']);
+            $url = new url($this->url, ['mode' => 'teamconnections']);
             $PAGE->navbar->add(get_string('acp_teamconnections', 'local_o365'), $url);
             $PAGE->requires->jquery();
             $this->standard_header();
@@ -1537,7 +1611,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
             $group = null;
             $groupname = '';
 
-            $courselink = html_writer::link(new moodle_url('/course/view.php', ['id' => $course->id]), $course->fullname);
+            $courselink = html_writer::link(new url('/course/view.php', ['id' => $course->id]), $course->fullname);
             $groupcheckstatusitem = [
                 get_string('acp_maintenance_recreatedeletedgroups_group_type_' . $groupconnectiontype, 'local_o365'),
                 $courselink,
@@ -1568,7 +1642,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
             }
         }
 
-        $url = new moodle_url($this->url, ['mode' => 'recreatedeletedgroups']);
+        $url = new url($this->url, ['mode' => 'recreatedeletedgroups']);
         $PAGE->navbar->add(get_string('acp_maintenance_recreatedeletedgroups', 'local_o365'), $url);
         $PAGE->requires->jquery();
         $this->standard_header();
@@ -1625,7 +1699,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
         $outputsbycourse = [];
         foreach ($courses as $course) {
             $courseitem = [];
-            $courseitem['link'] = html_writer::link(new moodle_url('/course/view.php', ['id' => $course->id]), $course->fullname);
+            $courseitem['link'] = html_writer::link(new url('/course/view.php', ['id' => $course->id]), $course->fullname);
             try {
                 ob_start();
                 $coursesync->process_course_team_user_sync_from_moodle_to_microsoft($course->id, $course->groupobjectid);
@@ -1641,7 +1715,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
 
         $courses->close();
 
-        $url = new moodle_url($this->url, ['mode' => 'resyncgroupusers']);
+        $url = new url($this->url, ['mode' => 'resyncgroupusers']);
         $PAGE->navbar->add(get_string('acp_maintenance_resyncgroupusers', 'local_o365'), $url);
         $PAGE->requires->jquery();
         $this->standard_header();
@@ -1722,7 +1796,6 @@ var local_o365_coursesync_all_set_feature = function(state) {
                 'enableunifiedapi',
                 'disablegraphapi',
                 'odburl',
-                'photoexpire',
                 'usersynccreationrestriction',
                 'task_usersync_lastdelete',
                 'task_usersync_lastdeltatoken',
@@ -1834,7 +1907,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
 
         $this->set_title(get_string('acp_maintenance', 'local_o365'));
 
-        $PAGE->navbar->add(get_string('acp_maintenance', 'local_o365'), new moodle_url($this->url, ['mode' => 'maintenance']));
+        $PAGE->navbar->add(get_string('acp_maintenance', 'local_o365'), new url($this->url, ['mode' => 'maintenance']));
         $PAGE->requires->jquery();
         $this->standard_header();
 
@@ -1842,33 +1915,33 @@ var local_o365_coursesync_all_set_feature = function(state) {
         echo html_writer::empty_tag('br');
         echo html_writer::div(get_string('acp_maintenance_warning', 'local_o365'), 'alert alert-info');
 
-        $toolurl = new moodle_url($this->url, ['mode' => 'maintenance_resyncgroupusers']);
+        $toolurl = new url($this->url, ['mode' => 'maintenance_resyncgroupusers']);
         $toolname = get_string('acp_maintenance_resyncgroupusers', 'local_o365');
         echo html_writer::link($toolurl, $toolname, ['target' => '_blank']);
         echo html_writer::div(get_string('acp_maintenance_resyncgroupusers_desc', 'local_o365'));
 
-        $toolurl = new moodle_url($this->url, ['mode' => 'maintenance_recreatedeletedgroups']);
+        $toolurl = new url($this->url, ['mode' => 'maintenance_recreatedeletedgroups']);
         $toolname = get_string('acp_maintenance_recreatedeletedgroups', 'local_o365');
         echo html_writer::empty_tag('br');
         echo html_writer::link($toolurl, $toolname, ['target' => '_blank']);
         echo html_writer::div(get_string('acp_maintenance_recreatedeletedgroups_desc', 'local_o365'));
 
         if (empty($CFG->local_o365_disabledebugdata)) {
-            $toolurl = new moodle_url($this->url, ['mode' => 'maintenance_debugdata']);
+            $toolurl = new url($this->url, ['mode' => 'maintenance_debugdata']);
             $toolname = get_string('acp_maintenance_debugdata', 'local_o365');
             echo html_writer::empty_tag('br');
             echo html_writer::link($toolurl, $toolname);
             echo html_writer::div(get_string('acp_maintenance_debugdata_desc', 'local_o365'));
         }
 
-        $toolurl = new moodle_url('/auth/oidc/cleanupoidctokens.php');
+        $toolurl = new url('/auth/oidc/cleanupoidctokens.php');
         $toolname = get_string('cfg_cleanupoidctokens_key', 'auth_oidc');
         echo html_writer::empty_tag('br');
         echo html_writer::link($toolurl, $toolname, ['target' => '_blank']);
         echo html_writer::div(get_string('cfg_cleanupoidctokens_desc', 'auth_oidc'));
 
         // Clear delta token.
-        $toolurl = new moodle_url($this->url, ['mode' => 'maintenance_cleandeltatoken']);
+        $toolurl = new url($this->url, ['mode' => 'maintenance_cleandeltatoken']);
         $toolname = get_string('acp_maintenance_cleandeltatoken', 'local_o365');
         echo html_writer::empty_tag('br');
         echo html_writer::link($toolurl, $toolname);
@@ -1892,7 +1965,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
 
         set_config('task_usersync_lastdeltatoken', '', 'local_o365');
 
-        $url = new moodle_url($this->url, ['mode' => 'cleandeltatoken']);
+        $url = new url($this->url, ['mode' => 'cleandeltatoken']);
         $PAGE->navbar->add(get_string('acp_maintenance_cleandeltatoken', 'local_o365'), $url);
         $PAGE->requires->jquery();
         $this->standard_header();
@@ -1910,13 +1983,13 @@ var local_o365_coursesync_all_set_feature = function(state) {
 
         $PAGE->navbar->add(
             get_string('acp_userconnections', 'local_o365'),
-            new moodle_url($this->url, ['mode' => 'userconnections'])
+            new url($this->url, ['mode' => 'userconnections'])
         );
 
         $PAGE->requires->jquery();
         $this->standard_header();
 
-        $searchurl = new moodle_url('/local/o365/acp.php', ['mode' => 'userconnections']);
+        $searchurl = new url('/local/o365/acp.php', ['mode' => 'userconnections']);
         $filterfields = ['o365username' => 0, 'realname' => 0, 'username' => 0, 'idnumber' => 1, 'firstname' => 1, 'lastname' => 1,
             'email' => 1];
         $ufiltering = new filtering($filterfields, $searchurl);
@@ -2000,7 +2073,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
         }
 
         $urlparams = ['mode' => 'userconnections_manualmatch', 'userid' => $userid];
-        $redirect = new moodle_url('/local/o365/acp.php', $urlparams);
+        $redirect = new url('/local/o365/acp.php', $urlparams);
         $customdata = ['userid' => $userid];
         $mform = new manualusermatch($redirect, $customdata);
         if ($fromform = $mform->get_data()) {
@@ -2028,11 +2101,11 @@ var local_o365_coursesync_all_set_feature = function(state) {
             $uselogin = (!empty($fromform->uselogin)) ? 1 : 0;
             $matchrec = (object) ['muserid' => $userid, 'entraidupn' => $o365username, 'uselogin' => $uselogin];
             $DB->insert_record('local_o365_connections', $matchrec);
-            redirect(new moodle_url('/local/o365/acp.php', ['mode' => 'userconnections']));
+            redirect(new url('/local/o365/acp.php', ['mode' => 'userconnections']));
             die();
         }
 
-        $url = new moodle_url($this->url, ['mode' => 'userconnections']);
+        $url = new url($this->url, ['mode' => 'userconnections']);
         $PAGE->navbar->add(get_string('acp_userconnections', 'local_o365'), $url);
         $PAGE->requires->jquery();
         $this->standard_header();
@@ -2052,17 +2125,17 @@ var local_o365_coursesync_all_set_feature = function(state) {
         $confirmed = optional_param('confirmed', 0, PARAM_INT);
         if (!empty($confirmed)) {
             $DB->delete_records('local_o365_connections', ['muserid' => $userid]);
-            redirect(new moodle_url('/local/o365/acp.php', ['mode' => 'userconnections']));
+            redirect(new url('/local/o365/acp.php', ['mode' => 'userconnections']));
             die();
         } else {
-            $url = new moodle_url($this->url, ['mode' => 'userconnections']);
+            $url = new url($this->url, ['mode' => 'userconnections']);
             $PAGE->navbar->add(get_string('acp_userconnections', 'local_o365'), $url);
             $PAGE->requires->jquery();
             $this->standard_header();
             $message = get_string('acp_userconnections_table_unmatch_confirmmsg', 'local_o365', $user->username);
             $message .= '<br /><br />';
             $urlparams = ['mode' => 'userconnections_unmatch', 'userid' => $userid, 'confirmed' => 1, 'sesskey' => sesskey()];
-            $url = new moodle_url('/local/o365/acp.php', $urlparams);
+            $url = new url('/local/o365/acp.php', $urlparams);
             $label = get_string('acp_userconnections_table_unmatch', 'local_o365');
             $message .= html_writer::link($url, $label);
             echo html_writer::tag('div', $message, ['class' => 'alert alert-info', 'style' => 'text-align:center']);
@@ -2084,21 +2157,21 @@ var local_o365_coursesync_all_set_feature = function(state) {
         if (!empty($confirmed)) {
             $auth = new auth_plugin_oidc();
             $auth->set_httpclient(new httpclient());
-            $redirect = new moodle_url('/local/o365/acp.php', ['mode' => 'userconnections']);
+            $redirect = new url('/local/o365/acp.php', ['mode' => 'userconnections']);
             $selfurlparams = ['mode' => 'userconnections_disconnect', 'userid' => $userid, 'confirmed' => 1];
-            $selfurl = new moodle_url('/local/o365/acp.php', $selfurlparams);
+            $selfurl = new url('/local/o365/acp.php', $selfurlparams);
             $justtokens = !(($user->auth == 'oidc'));
             $auth->disconnect($justtokens, false, $redirect, $selfurl, $userid);
             die();
         } else {
-            $url = new moodle_url($this->url, ['mode' => 'userconnections']);
+            $url = new url($this->url, ['mode' => 'userconnections']);
             $PAGE->navbar->add(get_string('acp_userconnections', 'local_o365'), $url);
             $PAGE->requires->jquery();
             $this->standard_header();
             $message = get_string('acp_userconnections_table_disconnect_confirmmsg', 'local_o365', $user->username);
             $message .= '<br /><br />';
             $urlparams = ['mode' => 'userconnections_disconnect', 'userid' => $userid, 'confirmed' => 1, 'sesskey' => sesskey()];
-            $url = new moodle_url('/local/o365/acp.php', $urlparams);
+            $url = new url('/local/o365/acp.php', $urlparams);
             $label = get_string('acp_userconnections_table_disconnect', 'local_o365');
             $message .= html_writer::link($url, $label);
             echo html_writer::tag('div', $message, ['class' => 'alert alert-info', 'style' => 'text-align:center']);

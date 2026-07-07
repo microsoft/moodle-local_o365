@@ -23,21 +23,23 @@
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-require_once(__DIR__ . '/../../config.php');
-require_once($CFG->dirroot . '/course/lib.php');
-
+use core\context\coursecat;
+use core\url;
 use local_o365\feature\courserequest\main;
 use local_o365\form\courserequestform;
 
+require_once(__DIR__ . '/../../config.php');
+require_once($CFG->dirroot . '/course/lib.php');
+
 // Where we came from. Used in a number of redirects.
-$url = new moodle_url('/local/o365/courserequest.php');
+$url = new url('/local/o365/courserequest.php');
 $return = optional_param('return', null, PARAM_ALPHANUMEXT);
 $categoryid = optional_param('category', null, PARAM_INT);
 if ($return === 'management') {
     $url->param('return', $return);
-    $returnurl = new moodle_url('/course/management.php', ['categoryid' => $CFG->defaultrequestcategory]);
+    $returnurl = new url('/course/management.php', ['categoryid' => $CFG->defaultrequestcategory]);
 } else {
-    $returnurl = new moodle_url('/course/index.php');
+    $returnurl = new url('/course/index.php');
 }
 
 $PAGE->set_url($url);
@@ -62,7 +64,7 @@ if ($CFG->lockrequestcategory) {
     $categoryid = array_key_exists($CFG->defaultrequestcategory, $list) ? $CFG->defaultrequestcategory : key($list);
 }
 
-$context = context_coursecat::instance($categoryid ?: $CFG->defaultrequestcategory);
+$context = coursecat::instance($categoryid ?: $CFG->defaultrequestcategory);
 $PAGE->set_context($context);
 require_capability('moodle/course:request', $context);
 
@@ -112,7 +114,7 @@ if ($requestform->is_cancelled()) {
     notice(get_string('courserequestsuccess'), $returnurl);
 }
 
-$categoryurl = new moodle_url('/course/index.php');
+$categoryurl = new url('/course/index.php');
 if ($categoryid) {
     $categoryurl->param('categoryid', $categoryid);
 }

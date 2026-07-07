@@ -26,8 +26,8 @@
 namespace local_o365\webservices;
 
 use assign;
-use context_course;
-use context_module;
+use core\context\course;
+use core\context\module;
 use moodle_exception;
 
 defined('MOODLE_INTERNAL') || die();
@@ -39,7 +39,7 @@ use core_external\external_multiple_structure;
 use core_external\external_single_structure;
 use core_external\external_value;
 use core_external\external_warnings;
-use moodle_url;
+use core\url;
 
 global $CFG;
 
@@ -156,7 +156,7 @@ class read_assignments extends external_api {
 
         foreach ($courseids as $cid) {
             try {
-                $context = context_course::instance($cid);
+                $context = course::instance($cid);
                 self::validate_context($context);
 
                 // Check if this course was already loaded (by enrol_get_users_courses).
@@ -216,7 +216,7 @@ class read_assignments extends external_api {
                         continue;
                     }
 
-                    $context = context_module::instance($module->id);
+                    $context = module::instance($module->id);
                     try {
                         self::validate_context($context);
                         require_capability('mod/assign:view', $context);
@@ -305,7 +305,7 @@ class read_assignments extends external_api {
                                 $assignment['introattachments'][] = [
                                     'filename' => $filename,
                                     'mimetype' => $file->get_mimetype(),
-                                    'fileurl' => moodle_url::make_webservice_pluginfile_url(
+                                    'fileurl' => url::make_webservice_pluginfile_url(
                                         $context->id,
                                         'mod_assign',
                                         ASSIGN_INTROATTACHMENT_FILEAREA,
