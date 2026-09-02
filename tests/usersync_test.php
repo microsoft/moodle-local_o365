@@ -481,6 +481,7 @@ final class usersync_test extends advanced_testcase {
                 true, // Re-enable suspended users.
                 false, // Do not suspend.
                 false, // Do not delete.
+                false, // Do not suspend on disabled accounts.
                 false  // Do not check account status.
             );
 
@@ -533,12 +534,13 @@ final class usersync_test extends advanced_testcase {
                 (object) ['objectid' => 'entra-user-1', 'accountenabled' => 0],
             ]);
 
-            // Process with syncdisabledstatus=true.
+            // Process with dodisabledsyncreenable=true.
             [$reenabled, $suspended, $deleted] = $usersync->process_user_status_from_temp_table(
                 $temptablename,
                 true, // Re-enable suspended users.
                 false, // Do not suspend.
                 false, // Do not delete.
+                false, // Do not suspend on disabled accounts.
                 true  // Check account enabled status.
             );
 
@@ -587,6 +589,7 @@ final class usersync_test extends advanced_testcase {
                 false, // Do not re-enable.
                 true, // Suspend deleted users.
                 false, // Do not delete.
+                false, // Do not suspend on disabled accounts.
                 false  // Do not check account status.
             );
 
@@ -597,6 +600,141 @@ final class usersync_test extends advanced_testcase {
             // Verify user is suspended.
             $user1refresh = $DB->get_record('user', ['id' => $user1->id]);
             $this->assertEquals(1, $user1refresh->suspended);
+        } finally {
+            $usersync->drop_entra_users_temp_table($temptablename);
+        }
+    }
+
+    /**
+     * Test that 'disabledsyncsuspend' independently suspends a user present in Entra with accountEnabled=false,
+     * without needing 'suspend' or 'reenable' enabled, and leaves an enabled user alone. This behaviour lives
+     * exclusively in userenabledstatussync (not in the regular usersync task), so a disabled Entra account is
+     * suspended promptly regardless of when the daily-gated status sync task last ran... other than via this task.
+     *
+     * @covers \local_o365\feature\usersync\main::process_user_status_from_temp_table
+     */
+    public function test_process_user_status_disabledsyncsuspend(): void {
+        global $DB;
+
+        $activeuser = $this->getDataGenerator()->create_user(['auth' => 'oidc', 'suspended' => 0]);
+        $alreadysuspendeduser = $this->getDataGenerator()->create_user(['auth' => 'oidc', 'suspended' => 1]);
+
+        $DB->insert_record('local_o365_objects', (object) [
+            'type' => 'user',
+            'moodleid' => $activeuser->id,
+            'objectid' => 'entra-user-active',
+            'o365name' => $activeuser->email,
+            'timecreated' => time(),
+            'timemodified' => time(),
+        ]);
+        $DB->insert_record('local_o365_objects', (object) [
+            'type' => 'user',
+            'moodleid' => $alreadysuspendeduser->id,
+            'objectid' => 'entra-user-alreadysuspended',
+            'o365name' => $alreadysuspendeduser->email,
+            'timecreated' => time(),
+            'timemodified' => time(),
+        ]);
+
+        $usersync = new main();
+        $temptablename = $usersync->create_entra_users_temp_table();
+
+        try {
+            // Both users are still present in Entra, but their accounts are disabled there.
+            $DB->insert_records($temptablename, [
+                (object) ['objectid' => 'entra-user-active', 'accountenabled' => 0],
+                (object) ['objectid' => 'entra-user-alreadysuspended', 'accountenabled' => 0],
+            ]);
+
+            [$reenabled, $suspended, $deleted] = $usersync->process_user_status_from_temp_table(
+                $temptablename,
+                false, // Do not re-enable.
+                false, // Do not suspend deleted users.
+                false, // Do not delete.
+                true, // Suspend users disabled in Entra.
+                false  // Do not re-enable users enabled in Entra.
+            );
+
+            $this->assertEquals(0, $reenabled);
+            $this->assertEquals(1, $suspended);
+            $this->assertEquals(0, $deleted);
+
+            $this->assertEquals(
+                1,
+                $DB->get_field('user', 'suspended', ['id' => $activeuser->id]),
+                'User should be suspended when present in Entra but disabled there.'
+            );
+            $this->assertEquals(
+                1,
+                $DB->get_field('user', 'suspended', ['id' => $alreadysuspendeduser->id]),
+                'Already-suspended user should remain suspended.'
+            );
+        } finally {
+            $usersync->drop_entra_users_temp_table($temptablename);
+        }
+    }
+
+    /**
+     * Test that 'disabledsyncreenable' independently re-enables a suspended user present in Entra with
+     * accountEnabled=true, without needing 'reenable' enabled, and leaves a still-disabled user suspended.
+     *
+     * @covers \local_o365\feature\usersync\main::process_user_status_from_temp_table
+     */
+    public function test_process_user_status_disabledsyncreenable(): void {
+        global $DB;
+
+        $suspendeduser = $this->getDataGenerator()->create_user(['auth' => 'oidc', 'suspended' => 1]);
+        $stilldisableduser = $this->getDataGenerator()->create_user(['auth' => 'oidc', 'suspended' => 1]);
+
+        $DB->insert_record('local_o365_objects', (object) [
+            'type' => 'user',
+            'moodleid' => $suspendeduser->id,
+            'objectid' => 'entra-user-reenabled',
+            'o365name' => $suspendeduser->email,
+            'timecreated' => time(),
+            'timemodified' => time(),
+        ]);
+        $DB->insert_record('local_o365_objects', (object) [
+            'type' => 'user',
+            'moodleid' => $stilldisableduser->id,
+            'objectid' => 'entra-user-stilldisabled',
+            'o365name' => $stilldisableduser->email,
+            'timecreated' => time(),
+            'timemodified' => time(),
+        ]);
+
+        $usersync = new main();
+        $temptablename = $usersync->create_entra_users_temp_table();
+
+        try {
+            $DB->insert_records($temptablename, [
+                (object) ['objectid' => 'entra-user-reenabled', 'accountenabled' => 1],
+                (object) ['objectid' => 'entra-user-stilldisabled', 'accountenabled' => 0],
+            ]);
+
+            [$reenabled, $suspended, $deleted] = $usersync->process_user_status_from_temp_table(
+                $temptablename,
+                false, // Do not re-enable.
+                false, // Do not suspend deleted users.
+                false, // Do not delete.
+                false, // Do not suspend users disabled in Entra.
+                true   // Re-enable users enabled in Entra.
+            );
+
+            $this->assertEquals(1, $reenabled);
+            $this->assertEquals(0, $suspended);
+            $this->assertEquals(0, $deleted);
+
+            $this->assertEquals(
+                0,
+                $DB->get_field('user', 'suspended', ['id' => $suspendeduser->id]),
+                'User should be re-enabled when present and enabled again in Entra.'
+            );
+            $this->assertEquals(
+                1,
+                $DB->get_field('user', 'suspended', ['id' => $stilldisableduser->id]),
+                'User should remain suspended while still disabled in Entra.'
+            );
         } finally {
             $usersync->drop_entra_users_temp_table($temptablename);
         }
@@ -726,5 +864,99 @@ final class usersync_test extends advanced_testcase {
             $usercount,
             'Exactly one OIDC user should exist; no new user should be created'
         );
+    }
+
+    /**
+     * Test user creation restrictions with multiple Microsoft 365 group object IDs.
+     *
+     * @covers \local_o365\feature\usersync\main::check_usercreationrestriction
+     */
+    public function test_usercreationrestriction_multiple_group_ids(): void {
+        $apiclient = new class {
+            /**
+             * Transitive group IDs returned for the test user.
+             *
+             * @var array
+             */
+            public ?array $usergroups = [];
+
+            /**
+             * Return the configured test group IDs.
+             *
+             * @param string $userid User object ID.
+             * @return array
+             */
+            public function get_user_transitive_groups($userid): ?array {
+                return $this->usergroups;
+            }
+        };
+
+        $usersync = new class ($apiclient) extends main {
+            /**
+             * Test API client.
+             *
+             * @var object
+             */
+            private object $testapiclient;
+
+            /**
+             * Constructor.
+             *
+             * @param object $apiclient Test API client.
+             */
+            public function __construct(object $apiclient) {
+                $this->testapiclient = $apiclient;
+            }
+
+            /**
+             * Return the test API client.
+             *
+             * @return object
+             */
+            public function construct_user_api() {
+                return $this->testapiclient;
+            }
+
+            /**
+             * Expose the protected restriction check for this regression test.
+             *
+             * @param array $entraiduserdata Entra ID user data.
+             * @return bool
+             */
+            public function check_usercreationrestriction_for_test(array $entraiduserdata): bool {
+                return $this->check_usercreationrestriction($entraiduserdata);
+            }
+        };
+
+        $restriction = [
+            'remotefield' => 'o365groupid',
+            'value' => '11111111-1111-1111-1111-111111111111, 22222222-2222-2222-2222-222222222222',
+            'useregex' => false,
+        ];
+        set_config('usersynccreationrestriction', serialize($restriction), 'local_o365');
+
+        // Membership in any configured group should pass.
+        $apiclient->usergroups = ['22222222-2222-2222-2222-222222222222'];
+        $this->assertTrue($usersync->check_usercreationrestriction_for_test(['id' => 'test-user']));
+
+        // No matching configured group should fail.
+        $apiclient->usergroups = ['33333333-3333-3333-3333-333333333333'];
+        $this->assertFalse($usersync->check_usercreationrestriction_for_test(['id' => 'test-user']));
+
+        // Preserve the existing single-group configuration behavior.
+        $restriction['value'] = '22222222-2222-2222-2222-222222222222';
+        set_config('usersynccreationrestriction', serialize($restriction), 'local_o365');
+        $apiclient->usergroups = ['22222222-2222-2222-2222-222222222222'];
+        $this->assertTrue($usersync->check_usercreationrestriction_for_test(['id' => 'test-user']));
+
+        // Group object IDs should match regardless of GUID letter casing.
+        $restriction['value'] = 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA';
+        set_config('usersynccreationrestriction', serialize($restriction), 'local_o365');
+        $apiclient->usergroups = ['aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'];
+        $this->assertTrue($usersync->check_usercreationrestriction_for_test(['id' => 'test-user']));
+
+        // A failed Graph lookup can return null. This must fail closed without a TypeError.
+        $apiclient->usergroups = null;
+        $this->assertFalse($usersync->check_usercreationrestriction_for_test(['id' => 'test-user']));
     }
 }

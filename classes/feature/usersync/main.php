@@ -147,8 +147,8 @@ class main {
         $usersyncsettings = get_config('local_o365', 'usersync');
         if (!empty($usersyncsettings)) {
             $usersyncsettings = explode(',', $usersyncsettings);
-            $realsyncoptions = ['create', 'update', 'suspend', 'reenable', 'disabledsync', 'matchswitchauth', 'appassign',
-                'photosync', 'tzsync'];
+            $realsyncoptions = ['create', 'update', 'suspend', 'reenable', 'disabledsyncsuspend', 'disabledsyncreenable',
+                'matchswitchauth', 'appassign', 'photosync', 'tzsync'];
             if (!empty(array_intersect($usersyncsettings, $realsyncoptions))) {
                 // At least one sync option is enabled.
                 return true;
@@ -242,6 +242,7 @@ class main {
      * @param bool $printtrace Whether to output trace messages
      * @param int|null $appassignid Pre-fetched local_o365_appassign record ID, or null to look it up.
      * @param int|null $currentpicture Pre-fetched user.picture value, or null to look it up.
+     * @param string|null $photohash Pre-fetched photo hash, or null to look it up.
      * @return bool True if photo was updated, false otherwise
      */
     protected function apply_photo(
@@ -249,7 +250,8 @@ class main {
         $photodata,
         bool $printtrace = false,
         ?int $appassignid = null,
-        ?int $currentpicture = null
+        ?int $currentpicture = null,
+        ?string $photohash = null
     ) {
         global $DB, $CFG;
 
@@ -268,53 +270,34 @@ class main {
         $context = user::instance($muserid);
 
         if (!$photodata || $photodata === false) {
-            // No profile photo found.
+            // No profile photo found in M365.
             if ($printtrace) {
                 $this->mtrace('No photo received.');
             }
 
-            if (!empty($muser->picture)) {
-                // User has no photo. Deleting previous profile photo.
+            // Return true (state changed) only when there was an existing picture to clear.
+            // Returning false when the picture was already absent avoids spurious "changed" counts.
+            $result = !empty($muser->picture);
+
+            if ($result) {
+                // User had a photo; clear it now.
                 $fs = get_file_storage();
                 $fs->delete_area_files($context->id, 'user', 'icon');
                 $DB->set_field('user', 'picture', 0, ['id' => $muser->id]);
+
+                if ($printtrace) {
+                    $this->mtrace('Profile photo cleared.');
+                }
             }
 
-            $result = false;
-        } else {
-            // Both get_photo() and get_photos_batch() guarantee that $photodata is valid
-            // binary image data at this point (validated via is_valid_photo_binary() in
-            // unified.php), so no JSON-error guard is needed here.
-            $tempfile = tempnam($CFG->tempdir . '/', 'profileimage') . '.jpg';
-            if (!$fp = fopen($tempfile, 'w+b')) {
-                @unlink($tempfile);
-                return false;
-            }
-
-            fwrite($fp, $photodata);
-            fclose($fp);
-
-            $newpicture = process_new_icon($context, 'user', 'icon', 0, $tempfile);
-            if ($newpicture != $muser->picture) {
-                $DB->set_field('user', 'picture', $newpicture, ['id' => $muser->id]);
-                $result = true;
-            }
-
-            @unlink($tempfile);
-
-            if ($printtrace) {
-                $this->mtrace('Photo applied.');
-            }
-
-            // Update appassign record.
-            // When the batch query has already resolved the record ID, use it directly
-            // to skip the per-user SELECT. Fall back to a full lookup (insert or update)
-            // when the ID is unknown (e.g. new users with no existing appassign record,
-            // or callers outside the batch task such as assign_photo).
+            // Update appassign regardless of whether a picture existed, so that photoupdated
+            // reflects when M365 was last checked (enabling the expiry logic to skip future
+            // re-fetches) and any stale photohash is cleared to avoid false "unchanged" matches.
             if ($appassignid !== null) {
                 $record = new stdClass();
                 $record->id = $appassignid;
                 $record->photoupdated = time();
+                $record->photohash = null;
                 $DB->update_record('local_o365_appassign', $record);
             } else {
                 $record = $DB->get_record('local_o365_appassign', ['muserid' => $muserid]);
@@ -324,6 +307,109 @@ class main {
                     $record->assigned = 0;
                 }
                 $record->photoupdated = time();
+                $record->photohash = null;
+                if (empty($record->id)) {
+                    $DB->insert_record('local_o365_appassign', $record);
+                } else {
+                    $DB->update_record('local_o365_appassign', $record);
+                }
+            }
+        } else if ($photohash !== null) {
+            // Photo hash provided: check if photo actually changed by comparing hashes.
+            $appassign = null;
+            if ($appassignid !== null) {
+                $appassign = $DB->get_record('local_o365_appassign', ['id' => $appassignid]);
+            } else {
+                $appassign = $DB->get_record('local_o365_appassign', ['muserid' => $muserid]);
+            }
+
+            // If the stored photo hash matches the new hash, photo hasn't changed.
+            if ($appassign && $appassign->photohash === $photohash) {
+                if ($printtrace) {
+                    $this->mtrace('Photo unchanged (same hash).');
+                }
+                $result = false;
+            } else {
+                // Hash is different or no previous hash stored: photo has changed.
+                // Process and store the new photo.
+                $result = $this->process_new_photo($muserid, $photodata, $printtrace, $muser, $context, $photohash, $appassignid);
+            }
+        } else {
+            // Both get_photo() and get_photos_batch() guarantee that $photodata is valid
+            // binary image data at this point (validated via is_valid_photo_binary() in
+            // unified.php), so no JSON-error guard is needed here.
+            $result = $this->process_new_photo($muserid, $photodata, $printtrace, $muser, $context, $photohash, $appassignid);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Process new photo data by storing it and updating user record.
+     *
+     * @param int $muserid The Moodle user ID
+     * @param string $photodata Binary photo data
+     * @param bool $printtrace Whether to output trace messages
+     * @param stdClass $muser User object with id and picture fields
+     * @param context_user $context User context
+     * @param string|null $photohash SHA256 hash of the photo data
+     * @param int|null $appassignid ID of the appassign record
+     * @return bool True if photo was updated, false otherwise
+     */
+    protected function process_new_photo(
+        int $muserid,
+        string $photodata,
+        bool $printtrace,
+        stdClass $muser,
+        $context,
+        ?string $photohash,
+        ?int $appassignid
+    ): bool {
+        global $DB, $CFG;
+
+        $tempfile = tempnam($CFG->tempdir . '/', 'profileimage') . '.jpg';
+        if (!$fp = fopen($tempfile, 'w+b')) {
+            @unlink($tempfile);
+            return false;
+        }
+
+        fwrite($fp, $photodata);
+        fclose($fp);
+
+        $newpicture = process_new_icon($context, 'user', 'icon', 0, $tempfile);
+        $result = false;
+        if ($newpicture != $muser->picture) {
+            $DB->set_field('user', 'picture', $newpicture, ['id' => $muser->id]);
+            $result = true;
+        }
+
+        @unlink($tempfile);
+
+        if ($printtrace) {
+            $this->mtrace('Photo applied.');
+        }
+
+        // Update appassign record only if photo changed.
+        if ($result) {
+            if ($appassignid !== null) {
+                $record = new stdClass();
+                $record->id = $appassignid;
+                $record->photoupdated = time();
+                if ($photohash !== null) {
+                    $record->photohash = $photohash;
+                }
+                $DB->update_record('local_o365_appassign', $record);
+            } else {
+                $record = $DB->get_record('local_o365_appassign', ['muserid' => $muserid]);
+                if (empty($record)) {
+                    $record = new stdClass();
+                    $record->muserid = $muserid;
+                    $record->assigned = 0;
+                }
+                $record->photoupdated = time();
+                if ($photohash !== null) {
+                    $record->photohash = $photohash;
+                }
                 if (empty($record->id)) {
                     $DB->insert_record('local_o365_appassign', $record);
                 } else {
@@ -457,14 +543,17 @@ class main {
      * @param mixed $photodata The photo data (binary string or false for no photo)
      * @param int|null $appassignid Pre-fetched local_o365_appassign record ID, or null to look it up.
      * @param int|null $currentpicture Pre-fetched user.picture value, or null to look it up.
+     * @param string|null $photohash Pre-fetched photo hash, or null to look it up.
+     * @return bool True if photo was updated, false otherwise
      */
     public function apply_photo_public(
         int $muserid,
         $photodata,
         ?int $appassignid = null,
-        ?int $currentpicture = null
-    ) {
-        $this->apply_photo($muserid, $photodata, false, $appassignid, $currentpicture);
+        ?int $currentpicture = null,
+        ?string $photohash = null
+    ): bool {
+        return $this->apply_photo($muserid, $photodata, false, $appassignid, $currentpicture, $photohash);
     }
 
     /**
@@ -564,6 +653,12 @@ class main {
      */
     public function process_users_batched(callable $callback, $params = 'default'): int {
         $apiclient = $this->construct_user_api();
+
+        $groupfilter = $this->get_usersync_group_filter();
+        if (!empty($groupfilter)) {
+            return $apiclient->process_group_members_batched($groupfilter, $callback, $params);
+        }
+
         return $apiclient->process_users_batched($callback, $params);
     }
 
@@ -580,12 +675,26 @@ class main {
      */
     public function process_users_delta_batched(callable $callback, $params = 'default', ?string $deltatoken = null): array {
         $apiclient = $this->construct_user_api();
+
+        $groupfilter = $this->get_usersync_group_filter();
+        if (!empty($groupfilter)) {
+            return $apiclient->process_group_members_delta_batched($groupfilter, $callback, $params, $deltatoken);
+        }
+
         return $apiclient->process_users_delta_batched($callback, $params, $deltatoken);
     }
 
     /**
      * Process users in batches with minimal fields (id and accountEnabled only).
      * This method is optimized for suspend/reenable operations that only need user IDs.
+     *
+     * NOTE: This method intentionally does NOT apply the usersyncgroupfilter setting.
+     * Enabled-status sync (suspend/reenable/delete) operates across all Entra users so
+     * that accounts disabled or deleted in Microsoft 365 are always suspended in Moodle,
+     * even when the user was never in the configured sync group. This is a deliberate
+     * safety-net behaviour and is documented in the settings_usersyncgroupfilter_details
+     * language string. If you need group-filtered status checks, call
+     * process_users_batched() with the appropriate callback instead.
      *
      * @param callable $callback Function to call for each batch of users. Receives array of users as parameter.
      * @return int Total number of users processed
@@ -1007,24 +1116,29 @@ class main {
             $apiclient = $this->construct_user_api();
 
             try {
-                $group = $apiclient->get_group($restriction['value']);
-                if (empty($group) || !isset($group['id'])) {
-                    utils::debug('Could not find group (1)', __METHOD__, $group);
-
+                // Support one group ID (legacy behavior) or a comma-separated list.
+                $groupids = array_values(array_filter(array_map('trim', explode(',', $restriction['value']))));
+                if (empty($groupids)) {
                     return false;
                 }
 
+                // Object IDs are case-insensitive GUIDs. Normalize both sides before comparison.
+                $groupids = array_map('strtolower', $groupids);
                 $usergroups = $apiclient->get_user_transitive_groups($entraiduserdata['id']);
+                if (empty($usergroups)) {
+                    return false;
+                }
+                $usergroups = array_flip(array_map('strtolower', $usergroups));
 
-                foreach ($usergroups as $usergroup) {
-                    if ($group['id'] === $usergroup) {
+                foreach ($groupids as $groupid) {
+                    if (isset($usergroups[$groupid])) {
                         return true;
                     }
                 }
 
                 return false;
             } catch (moodle_exception $e) {
-                utils::debug('Could not find group (2)', __METHOD__, $e);
+                utils::debug('Could not check group membership', __METHOD__, $e);
 
                 return false;
             }
@@ -1109,7 +1223,7 @@ class main {
         ];
 
         // Determine if the newly created user needs to be suspended.
-        if (isset($syncoptions['disabledsync'])) {
+        if (isset($syncoptions['disabledsyncsuspend'])) {
             if (isset($entraiduserdata['accountEnabled']) && $entraiduserdata['accountEnabled'] == false) {
                 $newuser->suspended = 1;
             }
@@ -1309,8 +1423,10 @@ class main {
                      conn.id as existingconnectionid,
                      assign.assigned assigned,
                      assign.photoid photoid,
+                     assign.photohash photohash,
                      assign.photoupdated photoupdated,
-                     obj.id AS objectid
+                     obj.id AS objectid,
+                     obj.objectid AS o365objectid
                 FROM {user} u
            LEFT JOIN {auth_oidc_token} tok ON tok.userid = u.id
            LEFT JOIN {local_o365_connections} conn ON conn.muserid = u.id
@@ -1388,8 +1504,10 @@ class main {
                        conn.id as existingconnectionid,
                        assign.assigned assigned,
                        assign.photoid photoid,
+                       assign.photohash photohash,
                        assign.photoupdated photoupdated,
-                       obj.id AS objectid
+                       obj.id AS objectid,
+                       obj.objectid AS o365objectid
                   FROM {user} u
              LEFT JOIN {auth_oidc_token} tok ON tok.userid = u.id
              LEFT JOIN {local_o365_connections} conn ON conn.muserid = u.id
@@ -1791,7 +1909,11 @@ class main {
                     if (isset($usersyncsettings['update'])) {
                         $fullexistinguser = get_complete_user_data('username', $existinguser->username);
                         if ($fullexistinguser) {
-                            // Get_complete_user_data() already includes description field, no need to fetch again.
+                            $existingusercopy = core_user::get_user_by_username($existinguser->username);
+                            if ($existingusercopy) {
+                                $fullexistinguser->description = $existingusercopy->description;
+                                $fullexistinguser->descriptionformat = $existingusercopy->descriptionformat;
+                            }
                             $this->update_user_from_entra_id_data($entraiduser, $fullexistinguser);
                             $this->mtrace('Field mapping applied.');
                         } else {
@@ -1913,13 +2035,22 @@ class main {
             }
         }
 
-        // Use pre-fetched O365 object record to avoid N+1 query problem.
-        $localo365objectrecord = $this->o365objectsbymoodleid[$existinguser->muserid] ?? null;
-        if ($localo365objectrecord && $localo365objectrecord->id == $existinguser->objectid) {
-            if ($localo365objectrecord->objectid != $userobjectid) {
-                $localo365objectrecord->objectid = $userobjectid;
-                $DB->update_record('local_o365_objects', $localo365objectrecord);
-                $this->mtrace('Updated user object ID in local_o365_object record.');
+        // The stored Entra ID is usually already available from the existing user query. Fall back to the
+        // pre-fetched object cache (no extra DB query) if this record was built without it, to detect a
+        // changed GUID (e.g. the Entra ID account was deleted and recreated).
+        if (!empty($existinguser->objectid)) {
+            if (isset($existinguser->o365objectid)) {
+                $storedobjectid = $existinguser->o365objectid;
+            } else {
+                $cachedobject = $this->o365objectsbymoodleid[$existinguser->muserid] ?? null;
+                $storedobjectid = $cachedobject->objectid ?? null;
+            }
+
+            if ($storedobjectid != $userobjectid) {
+                $updated = $DB->set_field('local_o365_objects', 'objectid', $userobjectid, ['id' => $existinguser->objectid]);
+                if ($updated) {
+                    $this->mtrace('Updated user object ID in local_o365_objects record.');
+                }
             }
         }
 
@@ -1932,27 +2063,6 @@ class main {
                     }
                 } catch (moodle_exception $e) {
                     $this->mtrace('Could not assign user "' . $entraiduserdata['useridentifier'] . '" Reason: ' . $e->getMessage());
-                }
-            }
-        }
-
-        // Sync disabled status.
-        if (isset($syncoptions['disabledsync'])) {
-            if (isset($entraiduserdata['accountEnabled'])) {
-                if ($entraiduserdata['accountEnabled']) {
-                    if ($existinguser->suspended == 1) {
-                        $completeexistinguser = $this->fullusersbymoodleid[$existinguser->muserid]
-                            ?? core_user::get_user($existinguser->muserid);
-                        $completeexistinguser->suspended = 0;
-                        user_update_user($completeexistinguser, false);
-                    }
-                } else {
-                    if ($existinguser->suspended == 0) {
-                        $completeexistinguser = $this->fullusersbymoodleid[$existinguser->muserid]
-                            ?? core_user::get_user($existinguser->muserid);
-                        $completeexistinguser->suspended = 1;
-                        user_update_user($completeexistinguser, false);
-                    }
                 }
             }
         }
@@ -2282,6 +2392,15 @@ class main {
      *
      * Streams API results directly into database without accumulating in PHP memory.
      *
+     * This method deliberately fetches ALL Entra users regardless of any usersyncgroupfilter
+     * setting. The temporary table is consumed by the enabled-status sync task
+     * (userenabledstatussync), which must be able to suspend or delete Moodle accounts for
+     * users who have been disabled or removed from Entra ID — even if those users were never
+     * members of the configured sync group. Scoping this query to the group would create a
+     * blind spot where deleted non-member accounts are never suspended.
+     *
+     * See also: process_users_minimal_batched() and settings_usersyncgroupfilter_details.
+     *
      * @param string $temptablename The name of the temporary table to populate.
      */
     public function populate_entra_users_temp_table(string $temptablename): void {
@@ -2290,6 +2409,7 @@ class main {
         $apiclient = $this->construct_user_api();
         $insertcount = 0;
 
+        // Intentionally unfiltered — see method docblock for rationale.
         $apiclient->process_users_minimal_batched(function (array $entrabatch) use ($DB, $temptablename, &$insertcount) {
             $records = [];
             foreach ($entrabatch as $user) {
@@ -2317,10 +2437,12 @@ class main {
      * from multiple passes through the user table.
      *
      * @param string $temptablename The name of the temporary table with Entra users.
-     * @param bool $doreenable Whether to reenable users.
-     * @param bool $dosuspend Whether to suspend users.
+     * @param bool $doreenable Whether to reenable users who reappear in Entra.
+     * @param bool $dosuspend Whether to suspend users who are no longer in Entra.
      * @param bool $dodelete Whether to delete suspended users.
-     * @param bool $syncdisabledstatus Whether to check accountEnabled status for re-enabling.
+     * @param bool $dodisabledsyncsuspend Whether to suspend users whose Entra account is disabled.
+     * @param bool $dodisabledsyncreenable Whether to reenable users whose Entra account is (re-)enabled, and whether
+     *                                     to require accountEnabled=true before reenabling via $doreenable.
      *
      * @return array [$reenabled, $suspended, $deleted] counts.
      */
@@ -2329,7 +2451,8 @@ class main {
         bool $doreenable,
         bool $dosuspend,
         bool $dodelete,
-        bool $syncdisabledstatus
+        bool $dodisabledsyncsuspend,
+        bool $dodisabledsyncreenable
     ): array {
         global $CFG, $DB;
 
@@ -2367,21 +2490,41 @@ class main {
         $usersrs = $DB->get_recordset_sql($sql, $params);
 
         foreach ($usersrs as $user) {
-            if ($doreenable && $user->isinentra && $user->suspended) {
-                // User is in Entra and suspended - check if should be reenabled.
-                if ($syncdisabledstatus && !$user->accountenabled) {
-                    continue; // Skip if accountEnabled=0 and we're checking status.
-                }
+            if ($user->isinentra) {
+                if ($user->suspended) {
+                    // User is in Entra and currently suspended - check if they should be reenabled, either because
+                    // they reappeared in Entra (gated by $doreenable, optionally requiring accountEnabled=true) or
+                    // because their Entra account has been (re-)enabled, independent of $doreenable.
+                    $shouldreenable = false;
+                    if ($doreenable && (!$dodisabledsyncreenable || $user->accountenabled)) {
+                        $shouldreenable = true;
+                    } else if ($dodisabledsyncreenable && $user->accountenabled) {
+                        $shouldreenable = true;
+                    }
 
-                $userstoreenable[] = $user->id;
-                $this->mtrace('Re-enabling user ' . $user->username . '...');
-                $reenabled++;
+                    if ($shouldreenable) {
+                        $userstoreenable[] = $user->id;
+                        $this->mtrace('Re-enabling user ' . $user->username . '...');
+                        $reenabled++;
 
-                if (count($userstoreenable) >= 500) {
-                    $this->update_users_suspended(0, $userstoreenable);
-                    $userstoreenable = [];
+                        if (count($userstoreenable) >= 500) {
+                            $this->update_users_suspended(0, $userstoreenable);
+                            $userstoreenable = [];
+                        }
+                    }
+                } else if ($dodisabledsyncsuspend && !$user->accountenabled) {
+                    // User is in Entra but their account has been disabled, and not already suspended - suspend,
+                    // independent of $dosuspend (which only applies to users no longer in Entra at all).
+                    $userstosuspend[] = $user->id;
+                    $this->mtrace('Suspended ' . $user->username . ' (disabled in Entra ID)');
+                    $suspended++;
+
+                    if (count($userstosuspend) >= 500) {
+                        $this->update_users_suspended(1, $userstosuspend);
+                        $userstosuspend = [];
+                    }
                 }
-            } else if ($dosuspend && !$user->isinentra && !$user->suspended) {
+            } else if ($dosuspend && !$user->suspended) {
                 // User is NOT in Entra (deleted) and not suspended - suspend.
                 $userstosuspend[] = $user->id;
                 $this->mtrace('Suspended ' . $user->username . ' (deleted in Entra ID)');
@@ -2391,7 +2534,7 @@ class main {
                     $this->update_users_suspended(1, $userstosuspend);
                     $userstosuspend = [];
                 }
-            } else if ($dosuspend && !$user->isinentra && $user->suspended && $dodelete) {
+            } else if ($dosuspend && $user->suspended && $dodelete) {
                 // User is NOT in Entra, already suspended, and NOT in soft-delete retention - safe to delete.
                 // Only delete if user is not in Entra's deleted-items (soft-delete retention expired).
                 if (!isset($deletedentrajsonids[$user->objectid])) {
@@ -2414,5 +2557,15 @@ class main {
         }
 
         return [$reenabled, $suspended, $deleted];
+    }
+
+    /**
+     * Get the configured Microsoft 365 group filter for user sync.
+     *
+     * @return string|null The group object ID if configured, null otherwise
+     */
+    public function get_usersync_group_filter(): ?string {
+        $groupid = get_config('local_o365', 'usersyncgroupfilter');
+        return !empty($groupid) ? trim($groupid) : null;
     }
 }

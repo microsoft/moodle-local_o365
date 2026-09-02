@@ -527,6 +527,80 @@ class unified extends o365api {
     }
 
     /**
+     * Look up multiple groups by object ID using batch requests.
+     * Microsoft Graph allows up to 20 requests per batch.
+     *
+     * @param array $objectids Array of group object IDs to look up.
+     * @return array Associative array keyed by the requested object ID. Each value is the
+     *               group data array on success, or null if the group was genuinely not found
+     *               (per-request status 404).
+     * @throws moodle_exception If the batch request itself fails (e.g. network or auth error),
+     *                          or if a per-request status other than 200/404 is returned (e.g.
+     *                          403, 429, 5xx) — such statuses indicate a service-level failure,
+     *                          not proof the group doesn't exist.
+     */
+    public function get_groups_batch(array $objectids): array {
+        if (empty($objectids)) {
+            return [];
+        }
+
+        $results = [];
+        $chunks = array_chunk($objectids, 20); // Max 20 requests per batch.
+
+        foreach ($chunks as $chunk) {
+            $batchrequests = [];
+            $idtoobjectidmap = [];
+
+            // Pre-initialise every object ID to null so that IDs absent from the batch
+            // response are treated as "not found" by the caller.
+            foreach ($chunk as $objectid) {
+                $results[$objectid] = null;
+            }
+
+            foreach ($chunk as $index => $objectid) {
+                $requestid = (string) ($index + 1);
+                $idtoobjectidmap[$requestid] = $objectid;
+                $batchrequests[] = [
+                    'id' => $requestid,
+                    'method' => 'GET',
+                    'url' => '/groups/' . $objectid,
+                ];
+            }
+
+            $batchpayload = ['requests' => $batchrequests];
+            $response = $this->betaapicall('post', '/$batch', json_encode($batchpayload));
+            $batchresponse = $this->process_apicall_response($response, ['responses' => null]);
+
+            if (!empty($batchresponse['responses']) && is_array($batchresponse['responses'])) {
+                foreach ($batchresponse['responses'] as $individualresponse) {
+                    $requestid = $individualresponse['id'] ?? null;
+                    if ($requestid === null || !isset($idtoobjectidmap[$requestid])) {
+                        continue;
+                    }
+
+                    $objectid = $idtoobjectidmap[$requestid];
+                    $status = $individualresponse['status'] ?? null;
+
+                    if ($status === 200 && !empty($individualresponse['body']['id'])) {
+                        $results[$objectid] = $individualresponse['body'];
+                    } else if ($status === 404) {
+                        // Genuinely not found; already pre-initialised to null above.
+                        continue;
+                    } else {
+                        // Any other status (403, 429, 5xx, etc.) is a service-level failure,
+                        // not proof the group doesn't exist, so don't silently report it as
+                        // "not found" and mislead callers validating group IDs.
+                        $errmsg = 'Batch lookup for group ' . $objectid . ' failed with status ' . $status;
+                        throw new moodle_exception('erroro365apibadcall_message', 'local_o365', '', htmlentities($errmsg));
+                    }
+                }
+            }
+        }
+
+        return $results;
+    }
+
+    /**
      * Get group urls.
      *
      * @param string $objectid The object ID of the group.
@@ -1262,6 +1336,220 @@ class unified extends o365api {
 
         [$totalprocessed] = $this->execute_odata_paginated('/users', $odataqueries, $pagehandler);
         return $totalprocessed;
+    }
+
+    /**
+     * Process users from a specific group in batches with a callback function.
+     * This fetches members of the specified group using the /groups/{id}/members endpoint.
+     *
+     * @param string $groupid The Microsoft 365 group object ID
+     * @param callable $callback Function to call for each batch of users. Receives array of users as parameter.
+     * @param string|array $params User fields to select (use 'default' for default fields)
+     * @return int Total number of users processed
+     * @throws moodle_exception
+     */
+    public function process_group_members_batched(string $groupid, callable $callback, $params = 'default'): int {
+        $odataqueries = [];
+
+        if ($params === 'default') {
+            $params = $this->get_required_user_fields();
+        }
+
+        if (is_array($params)) {
+            $excludedfields = ['preferredName', 'teams', 'groups', 'roles'];
+            foreach ($excludedfields as $excludedfield) {
+                if (($key = array_search($excludedfield, $params)) !== false) {
+                    unset($params[$key]);
+                }
+            }
+            $odataqueries['$select'] = implode(',', $params);
+        }
+
+        $odataqueries['$top'] = (string)self::GRAPH_API_BATCH_SIZE;
+
+        $ownerids = [];
+
+        // Fetch group owners first.
+        $ownerqueries = $odataqueries;
+        $ownerqueries['$top'] = '999'; // Owners list is typically small.
+        $ownerpage = function (array $result) use (&$ownerids): int {
+            if (!empty($result['value']) && is_array($result['value'])) {
+                foreach ($result['value'] as $owner) {
+                    if (!empty($owner['id'])) {
+                        $ownerids[$owner['id']] = $owner;
+                    }
+                }
+                return count($result['value']);
+            }
+            return 0;
+        };
+
+        $ownerendpoint = "/groups/{$groupid}/owners/microsoft.graph.user";
+        $this->execute_odata_paginated($ownerendpoint, $ownerqueries, $ownerpage);
+
+        // Fetch group members. As each page arrives, remove seen members from $ownerids
+        // so only genuine owner-only accounts remain after pagination completes.
+        $pagehandler = function (array $result) use ($callback, &$ownerids): int {
+            if (!empty($result['value']) && is_array($result['value'])) {
+                $users = $result['value'];
+                foreach ($users as $user) {
+                    if (!empty($user['id'])) {
+                        unset($ownerids[$user['id']]);
+                    }
+                }
+                $callback($users);
+                return count($users);
+            }
+            return 0;
+        };
+
+        $endpoint = "/groups/{$groupid}/members/microsoft.graph.user";
+        [$totalprocessed] = $this->execute_odata_paginated($endpoint, $odataqueries, $pagehandler);
+
+        // Emit owners who were not present in any members page (owner-only accounts).
+        // This is done once after all member pages to avoid duplicate processing.
+        if (!empty($ownerids)) {
+            $owneronly = array_values($ownerids);
+            $callback($owneronly);
+            $totalprocessed += count($owneronly);
+        }
+
+        return $totalprocessed;
+    }
+
+    /**
+     * Process users from a specific group in batches using delta (incremental) sync.
+     *
+     * Microsoft Graph API does not support delta queries directly on /groups/{id}/members.
+     * This method works around that limitation by:
+     *   1. Fetching the current group member and owner IDs upfront (id-only, lightweight).
+     *   2. Running the standard tenant-wide /users/delta query using the supplied token.
+     *   3. Filtering each delta page client-side to only pass group members to the callback.
+     *
+     * This preserves the efficiency of delta sync (only changed user records are transferred)
+     * while ensuring the group filter is strictly honoured. The delta token is stored and
+     * reused across runs just like an unfiltered delta sync.
+     *
+     * Known limitation: a user who existed in the tenant for a long time but was only recently
+     * added to the group may not appear in the delta (their user object may not have changed).
+     * Periodic full syncs (nodelta mode) handle this edge case.
+     *
+     * @param string $groupid The Microsoft 365 group object ID
+     * @param callable $callback Function to call for each filtered batch of group-member users
+     * @param string|array $params User fields to select (use 'default' for default fields)
+     * @param string|null $deltatoken Delta token from a previous sync, or null for a full initial sync
+     * @return array [total group-member users processed, new delta token, bool fields mapping changed]
+     * @throws moodle_exception
+     */
+    public function process_group_members_delta_batched(
+        string $groupid,
+        callable $callback,
+        $params = 'default',
+        ?string $deltatoken = null
+    ): array {
+        // Step 1: Fetch current group member and owner IDs (id field only — lightweight).
+        $memberids = [];
+        $idquery = ['$select' => 'id', '$top' => '999'];
+        $idhandler = function (array $result) use (&$memberids): int {
+            if (!empty($result['value']) && is_array($result['value'])) {
+                foreach ($result['value'] as $user) {
+                    if (!empty($user['id'])) {
+                        $memberids[$user['id']] = true;
+                    }
+                }
+                return count($result['value']);
+            }
+            return 0;
+        };
+
+        $this->execute_odata_paginated("/groups/{$groupid}/members/microsoft.graph.user", $idquery, $idhandler);
+        $this->execute_odata_paginated("/groups/{$groupid}/owners/microsoft.graph.user", $idquery, $idhandler);
+
+        if (empty($memberids)) {
+            // Group is empty or inaccessible — nothing to sync. Clear the delta token so the
+            // next run re-evaluates group membership from scratch.
+            utils::debug('Group ' . $groupid . ' has no members or owners; skipping delta sync.', __METHOD__);
+            return [0, null, false];
+        }
+
+        utils::debug(
+            'Group filter active (' . count($memberids) . ' members/owners). Running filtered tenant delta.',
+            __METHOD__
+        );
+
+        // Step 2: Build the OData query for the tenant-wide delta, replicating the fields-hash
+        // invalidation logic from process_users_delta_batched so token management is consistent.
+        $odataqueries = [];
+        $fieldsmappingchanged = false;
+
+        if ($params === 'default') {
+            $params = $this->get_required_user_fields();
+        }
+
+        if (is_array($params)) {
+            $excludedfields = ['preferredName', 'teams', 'groups', 'roles'];
+            foreach ($excludedfields as $excludedfield) {
+                if (($key = array_search($excludedfield, $params)) !== false) {
+                    unset($params[$key]);
+                }
+            }
+
+            sort($params);
+            $selectfields = implode(',', $params);
+            $odataqueries['$select'] = $selectfields;
+
+            $currentfieldshash = md5($selectfields);
+            if (!empty($deltatoken)) {
+                $storedfieldshash = get_config('local_o365', 'task_usersync_fieldshash');
+                if ($storedfieldshash && $storedfieldshash !== $currentfieldshash) {
+                    $deltatoken = null;
+                    $fieldsmappingchanged = true;
+                }
+            }
+
+            set_config('task_usersync_fieldshash', $currentfieldshash, 'local_o365');
+        }
+
+        if (!empty($deltatoken)) {
+            $odataqueries['$deltatoken'] = $deltatoken;
+        }
+
+        $odataqueries['$top'] = (string)self::GRAPH_API_BATCH_SIZE;
+
+        // Step 3: Stream the delta, filtering each page to group members/owners only.
+        // Deduplication (same user on multiple pages) mirrors process_users_delta_batched.
+        $knownids = [];
+        $pagehandler = function (array $result) use ($callback, &$knownids, $memberids): int {
+            if (empty($result['value']) || !is_array($result['value'])) {
+                return 0;
+            }
+
+            $batch = $result['value'];
+
+            // Remove duplicates and tombstone (deleted) records.
+            foreach ($batch as $key => $user) {
+                if (isset($knownids[$user['id']]) || isset($user['@removed'])) {
+                    unset($batch[$key]);
+                } else {
+                    $knownids[$user['id']] = true;
+                }
+            }
+
+            // Filter to group members and owners only.
+            $batch = array_values(array_filter($batch, function (array $user) use ($memberids): bool {
+                return !empty($user['id']) && isset($memberids[$user['id']]);
+            }));
+
+            if (!empty($batch)) {
+                $callback($batch);
+            }
+
+            return count($batch);
+        };
+
+        [$totalprocessed, $deltatokenvalue] = $this->execute_odata_paginated('/users/delta', $odataqueries, $pagehandler);
+
+        return [$totalprocessed, $deltatokenvalue, $fieldsmappingchanged];
     }
 
     /**
@@ -2670,36 +2958,36 @@ class unified extends o365api {
      * Get timezones for multiple users using batch requests.
      * Microsoft Graph allows up to 20 requests per batch.
      *
-     * @param array $upns Array of user principal names
-     * @return array Associative array with UPN as key and timezone data as value
+     * @param array $objectids Array of Azure AD object IDs (GUIDs)
+     * @return array Associative array with objectid as key and timezone data as value
      */
-    public function get_timezones_batch(array $upns): array {
-        if (empty($upns)) {
+    public function get_timezones_batch(array $objectids): array {
+        if (empty($objectids)) {
             return [];
         }
 
         $results = [];
-        $chunks = array_chunk($upns, 20); // Max 20 requests per batch.
+        $chunks = array_chunk($objectids, 20); // Max 20 requests per batch.
 
         foreach ($chunks as $chunk) {
             $batchrequests = [];
-            $idtoupnmap = [];
+            $idtoobjectidmap = [];
 
-            // Pre-initialise every UPN to false so that UPNs absent from the batch
-            // response (partial API failure) are treated as "no timezone" rather than
-            // silently skipped by the caller's isset() / empty() branch logic.
-            foreach ($chunk as $upn) {
-                $results[$upn] = false;
+            // Pre-initialise every objectid to false so that objectids absent from
+            // the batch response (partial API failure) are treated as "no timezone"
+            // rather than silently skipped by the caller's isset() / empty() branch.
+            foreach ($chunk as $objectid) {
+                $results[$objectid] = false;
             }
 
             // Build batch request.
-            foreach ($chunk as $index => $upn) {
+            foreach ($chunk as $index => $objectid) {
                 $requestid = (string)($index + 1);
-                $idtoupnmap[$requestid] = $upn;
+                $idtoobjectidmap[$requestid] = $objectid;
                 $batchrequests[] = [
                     'id' => $requestid,
                     'method' => 'GET',
-                    'url' => '/users/' . urlencode($upn) . '/mailboxSettings/timeZone',
+                    'url' => '/users/' . urlencode($objectid) . '/mailboxSettings/timeZone',
                 ];
             }
 
@@ -2712,19 +3000,19 @@ class unified extends o365api {
                 if (!empty($batchresponse['responses']) && is_array($batchresponse['responses'])) {
                     foreach ($batchresponse['responses'] as $individualresponse) {
                         $requestid = $individualresponse['id'];
-                        $upn = $idtoupnmap[$requestid];
+                        $objectid = $idtoobjectidmap[$requestid];
 
                         if ($individualresponse['status'] === 200 && !empty($individualresponse['body'])) {
-                            $results[$upn] = $individualresponse['body'];
+                            $results[$objectid] = $individualresponse['body'];
                         } else {
                             // Request failed or returned non-200 status.
-                            $results[$upn] = false;
+                            $results[$objectid] = false;
                         }
                     }
                 }
             } catch (moodle_exception $e) {
                 // Batch call itself failed; pre-initialisation above already set all
-                // UPNs in this chunk to false, so no additional work needed here.
+                // objectids in this chunk to false, so no additional work needed here.
                 debugging('Batch timezone request failed: ' . $e->getMessage(), DEBUG_DEVELOPER);
             }
         }
@@ -2800,6 +3088,7 @@ class unified extends o365api {
                                 $results[$upn] = [
                                     'status' => 'success',
                                     'data' => $binarydata,
+                                    'hash' => hash('sha256', $binarydata),
                                     'http_status' => $httpstatus,
                                 ];
                             } else {

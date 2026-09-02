@@ -24,7 +24,6 @@
  * @copyright (C) 2014 onwards Microsoft, Inc. (http://microsoft.com/)
  */
 
-use local_o365\feature\cohortsync\main;
 use local_o365\utils;
 
 defined('MOODLE_INTERNAL') || die();
@@ -838,7 +837,7 @@ function xmldb_local_o365_upgrade($oldversion) {
         set_config('aadsync', $newaadsyncsetting, 'local_o365');
 
         // Force clear user sync delta token.
-        unset_config('local_o365', 'task_usersync_lastdeltatoken');
+        unset_config('task_usersync_lastdeltatoken', 'local_o365');
         purge_all_caches();
 
         // O365 savepoint reached.
@@ -993,11 +992,13 @@ function xmldb_local_o365_upgrade($oldversion) {
 
         // Define field locked to be added to local_o365_teams_cache.
         $table = new xmldb_table('local_o365_teams_cache');
-        $field = new xmldb_field('locked', XMLDB_TYPE_INTEGER, '1', null, null, null, null, 'url');
+        if ($dbman->table_exists($table)) {
+            $field = new xmldb_field('locked', XMLDB_TYPE_INTEGER, '1', null, null, null, null, 'url');
 
-        // Conditionally launch add field locked.
-        if (!$dbman->field_exists($table, $field)) {
-            $dbman->add_field($table, $field);
+            // Conditionally launch add field locked.
+            if (!$dbman->field_exists($table, $field)) {
+                $dbman->add_field($table, $field);
+            }
         }
 
         // O365 savepoint reached.
@@ -1100,16 +1101,9 @@ function xmldb_local_o365_upgrade($oldversion) {
             $dbman->create_table($table);
         }
 
-        // Update groups cache.
-        try {
-            $graphclient = main::get_unified_api(__METHOD__);
-            if ($graphclient) {
-                utils::update_groups_cache($graphclient);
-            }
-        } catch (moodle_exception $e) {
-            // Do nothing.
-            debugging('Error updating groups cache: ' . $e->getMessage());
-        }
+        // The groups cache is populated automatically by the coursesync and cohortsync scheduled tasks,
+        // so it is not warmed up here. Doing so could trigger a slow, tenant-wide Microsoft Graph API
+        // sync during upgrade even when neither feature is enabled.
 
         // O365 savepoint reached.
         upgrade_plugin_savepoint(true, 2023100901, 'local', 'o365');
@@ -1367,27 +1361,29 @@ function xmldb_local_o365_upgrade($oldversion) {
 
         // Changing precision of field objectid on table local_o365_teams_cache to (36).
         $table = new xmldb_table('local_o365_teams_cache');
-        $teamscachecolumns = $DB->get_columns('local_o365_teams_cache');
-        if (isset($teamscachecolumns['objectid']) && $teamscachecolumns['objectid']->max_length != 36) {
-            // Drop the objectid index first if it exists, as precision change cannot be made to indexed fields.
-            $index = new xmldb_index('objectid', XMLDB_INDEX_NOTUNIQUE, ['objectid']);
-            if ($dbman->index_exists($table, $index)) {
-                $dbman->drop_index($table, $index);
+        if ($dbman->table_exists($table)) {
+            $teamscachecolumns = $DB->get_columns('local_o365_teams_cache');
+            if (isset($teamscachecolumns['objectid']) && $teamscachecolumns['objectid']->max_length != 36) {
+                // Drop the objectid index first if it exists, as precision change cannot be made to indexed fields.
+                $index = new xmldb_index('objectid', XMLDB_INDEX_NOTUNIQUE, ['objectid']);
+                if ($dbman->index_exists($table, $index)) {
+                    $dbman->drop_index($table, $index);
+                }
+                $field = new xmldb_field('objectid', XMLDB_TYPE_CHAR, '36', null, XMLDB_NOTNULL, null, null, 'id');
+                // Launch change of precision for field objectid.
+                $dbman->change_field_precision($table, $field);
+                // Recreate the objectid index after precision change.
+                if (!$dbman->index_exists($table, $index)) {
+                    $dbman->add_index($table, $index);
+                }
             }
-            $field = new xmldb_field('objectid', XMLDB_TYPE_CHAR, '36', null, XMLDB_NOTNULL, null, null, 'id');
-            // Launch change of precision for field objectid.
-            $dbman->change_field_precision($table, $field);
-            // Recreate the objectid index after precision change.
-            if (!$dbman->index_exists($table, $index)) {
-                $dbman->add_index($table, $index);
-            }
-        }
 
-        // Changing precision of field name on table local_o365_teams_cache to (264).
-        if (isset($teamscachecolumns['name']) && $teamscachecolumns['name']->max_length != 264) {
-            $field = new xmldb_field('name', XMLDB_TYPE_CHAR, '264', null, null, null, null, 'objectid');
-            // Launch change of precision for field name.
-            $dbman->change_field_precision($table, $field);
+            // Changing precision of field name on table local_o365_teams_cache to (264).
+            if (isset($teamscachecolumns['name']) && $teamscachecolumns['name']->max_length != 264) {
+                $field = new xmldb_field('name', XMLDB_TYPE_CHAR, '264', null, null, null, null, 'objectid');
+                // Launch change of precision for field name.
+                $dbman->change_field_precision($table, $field);
+            }
         }
 
         // O365 savepoint reached.
@@ -1425,11 +1421,13 @@ function xmldb_local_o365_upgrade($oldversion) {
     if ($oldversion < 2025040807) {
         // Add index to local_o365_teams_cache.objectid for better query performance.
         $table = new xmldb_table('local_o365_teams_cache');
-        $index = new xmldb_index('objectid', XMLDB_INDEX_NOTUNIQUE, ['objectid']);
+        if ($dbman->table_exists($table)) {
+            $index = new xmldb_index('objectid', XMLDB_INDEX_NOTUNIQUE, ['objectid']);
 
-        // Conditionally launch add index objectid.
-        if (!$dbman->index_exists($table, $index)) {
-            $dbman->add_index($table, $index);
+            // Conditionally launch add index objectid.
+            if (!$dbman->index_exists($table, $index)) {
+                $dbman->add_index($table, $index);
+            }
         }
 
         // Add indexes to local_o365_groups_cache for better query performance.
@@ -1639,6 +1637,77 @@ function xmldb_local_o365_upgrade($oldversion) {
 
         // O365 savepoint reached.
         upgrade_plugin_savepoint(true, 2025100600.03, 'local', 'o365');
+    }
+
+    if ($oldversion < 2026042000.01) {
+        // Add dedicated photohash field to local_o365_appassign.
+        // Previously the photoid column (originally the MS 365 photo etag ID) was repurposed
+        // to store a SHA-256 hash of the photo bytes, causing confusion with the field's stated
+        // purpose. This step introduces a separate, correctly-named column for the hash so that
+        // photoid retains its original meaning.
+        $table = new xmldb_table('local_o365_appassign');
+        $field = new xmldb_field(
+            'photohash',
+            XMLDB_TYPE_CHAR,
+            '64',
+            null,
+            null,
+            null,
+            null,
+            'photoid'
+        );
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        // Migrate any SHA-256 hashes already stored in photoid into the new photohash column.
+        // A SHA-256 hex string is exactly 64 characters; a genuine MS 365 photo etag ID is
+        // typically much shorter, so length == 64 is a reliable discriminator.
+        $DB->execute(
+            "UPDATE {local_o365_appassign}
+                SET photohash = photoid, photoid = ''
+              WHERE " . $DB->sql_length('photoid') . " = 64"
+        );
+
+        // O365 savepoint reached.
+        upgrade_plugin_savepoint(true, 2026042000.01, 'local', 'o365');
+    }
+
+    if ($oldversion < 2026042000.03) {
+        // Split the 'disabledsync' user sync option into 'disabledsyncsuspend' and 'disabledsyncreenable', so sites can
+        // suspend Moodle accounts when disabled in Microsoft Entra ID without also automatically re-enabling them when
+        // re-enabled in Microsoft Entra ID.
+        // Preserve existing behaviour: sites with 'disabledsync' enabled get both new options enabled.
+        $usersync = get_config('local_o365', 'usersync');
+        if (!empty($usersync)) {
+            $options = explode(',', $usersync);
+            if (in_array('disabledsync', $options)) {
+                $options = array_diff($options, ['disabledsync']);
+                $options[] = 'disabledsyncsuspend';
+                $options[] = 'disabledsyncreenable';
+                set_config('usersync', implode(',', array_unique($options)), 'local_o365');
+            }
+        }
+
+        // O365 savepoint reached.
+        upgrade_plugin_savepoint(true, 2026042000.03, 'local', 'o365');
+    }
+
+    if ($oldversion < 2026042000.04) {
+        // Queue adhoc task to force a one-off full user sync, repairing accounts whose linked
+        // Microsoft Entra ID object ID went stale (e.g. the Entra ID account was deleted and
+        // recreated) before the object ID repair logic in the user sync task was fixed. Delta
+        // sync only reports users that changed since the last sync, so already-stale accounts
+        // would not otherwise be picked up again on their own.
+        $task = new \local_o365\task\forcefullusersync();
+        // Set next run time to ensure it runs in the next cron cycle, not during upgrade.
+        $task->set_next_run_time(time() + 60);
+        \core\task\manager::queue_adhoc_task($task);
+
+        mtrace('Queued adhoc task to force a full user sync and repair stale Entra ID object IDs.');
+
+        // O365 savepoint reached.
+        upgrade_plugin_savepoint(true, 2026042000.04, 'local', 'o365');
     }
 
     return true;

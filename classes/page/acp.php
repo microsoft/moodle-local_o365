@@ -34,6 +34,7 @@ use auth_plugin_oidc;
 use core_course_category;
 use core_php_time_limit;
 use core_plugin_manager;
+use core_text;
 use core_user;
 use finfo;
 use html_table;
@@ -88,8 +89,8 @@ class acp extends base {
         $params = ['section' => 'local_o365'];
         switch ($mode) {
             case 'coursesynccustom':
-                $params['section'] = 'local_o365_sync';
-                $this->title = get_string('settings_header_syncsettings', 'local_o365');
+                $params['section'] = 'local_o365_coursesync';
+                $this->title = get_string('settings_header_coursesync', 'local_o365');
                 break;
             case 'healthcheck':
             case 'usermatch':
@@ -121,15 +122,17 @@ class acp extends base {
      * Provide admin consent.
      */
     public function mode_adminconsent() {
+        require_sesskey();
+
         $auth = new authcode();
         $auth->set_httpclient(new httpclient());
         $stateparams = ['redirect' => '/admin/settings.php?section=local_o365', 'justauth' => true, 'forceflow' => 'authcode',
-            'action' => 'adminconsent'];
+            'action' => 'adminconsent', 'ignorerestrictions' => true];
         $idptype = get_config('auth_oidc', 'idptype');
         if ($idptype == AUTH_OIDC_IDP_TYPE_MICROSOFT_IDENTITY_PLATFORM) {
             $auth->initiateadminconsentrequest($stateparams);
         } else {
-            $extraparams = ['prompt' => 'admin_consent'];
+            $extraparams = ['prompt' => 'admin_consent', 'response_mode' => 'query'];
             $auth->initiateauthrequest(true, $stateparams, $extraparams);
         }
     }
@@ -278,7 +281,7 @@ class acp extends base {
         echo html_writer::div(get_string('acp_tenantsadd_desc', 'local_o365'));
         echo html_writer::empty_tag('br');
         $addtenantstr = get_string('acp_tenantsadd_linktext', 'local_o365');
-        $addtenanturl = new url('/local/o365/acp.php', ['mode' => 'tenantsaddgo']);
+        $addtenanturl = new url('/local/o365/acp.php', ['mode' => 'tenantsaddgo', 'sesskey' => sesskey()]);
         echo html_writer::link($addtenanturl, $addtenantstr, ['class' => 'btn btn-primary']);
 
         $this->standard_footer();
@@ -312,6 +315,8 @@ class acp extends base {
      * Perform auth request for tenant addition.
      */
     public function mode_tenantsaddgo() {
+        require_sesskey();
+
         $auth = new authcode();
         $auth->set_httpclient(new httpclient());
         $stateparams = ['redirect' => '/local/o365/acp.php?mode=tenantsadd', 'justauth' => true, 'forceflow' => 'authcode',
@@ -320,7 +325,7 @@ class acp extends base {
         if ($idptype == AUTH_OIDC_IDP_TYPE_MICROSOFT_IDENTITY_PLATFORM) {
             $auth->initiateadminconsentrequest($stateparams);
         } else {
-            $extraparams = ['prompt' => 'admin_consent'];
+            $extraparams = ['prompt' => 'admin_consent', 'response_mode' => 'query'];
             $auth->initiateauthrequest(true, $stateparams, $extraparams);
         }
     }
@@ -377,6 +382,8 @@ class acp extends base {
      */
     public function mode_usermatchclear() {
         global $DB;
+
+        require_sesskey();
 
         $type = optional_param('type', null, PARAM_TEXT);
         switch ($type) {
@@ -505,8 +512,8 @@ class acp extends base {
         if ($matchqueuelength > 0) {
             echo html_writer::start_tag('div', ['class' => 'local_o365_matchqueuetoolbar']);
 
-            $clearurl = new url('/local/o365/acp.php', ['mode' => 'usermatchclear']);
-            $clearurl = $clearurl->out();
+            $clearurl = new url('/local/o365/acp.php', ['mode' => 'usermatchclear', 'sesskey' => sesskey()]);
+            $clearurl = $clearurl->out(false);
 
             // Clear successful button.
             $checkicon = $OUTPUT->pix_icon('t/check', 'success', 'moodle');
@@ -1036,7 +1043,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
         // Check settings.
         $coursesyncsetting = get_config('local_o365', 'coursesync');
         if ($coursesyncsetting === 'off') {
-            $redirecturl = new url('/admin/settings.php', ['section' => 'local_o365_sync']);
+            $redirecturl = new url('/admin/settings.php', ['section' => 'local_o365_coursesync']);
             redirect($redirecturl, get_string('acp_teamconnections_sync_disabled', 'local_o365'));
         }
 
@@ -1118,7 +1125,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
                     // Connected to both group and team.
                     if ($teamscache = $DB->get_record('local_o365_groups_cache', $teamscachedata)) {
                         // Team record can be found in cache.
-                        $existingconnection = html_writer::link($teamscache->url, $teamscache->name);
+                        $existingconnection = html_writer::link($teamscache->url, s($teamscache->name));
                         if (
                             !$DB->record_exists(
                                 'local_o365_objects',
@@ -1137,7 +1144,8 @@ var local_o365_coursesync_all_set_feature = function(state) {
                         }
                     } else {
                         // A matching record exists in local_o365_objects, but the team cannot be found.
-                        $existingconnection = $grouprecord->o365name . get_string('acp_teamconnections_team_missing', 'local_o365');
+                        $existingconnection = s($grouprecord->o365name) .
+                            get_string('acp_teamconnections_team_missing', 'local_o365');
 
                         $actions = [html_writer::span(get_string('acp_teamconnections_table_missing_team', 'local_o365'))];
                     }
@@ -1161,7 +1169,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
                             'timemodified' => time()];
                         $teamobjectrecord['id'] = $DB->insert_record('local_o365_objects', (object) $teamobjectrecord);
 
-                        $existingconnection = html_writer::link($teamscache->url, $teamscache->name);
+                        $existingconnection = html_writer::link($teamscache->url, s($teamscache->name));
 
                         if (
                             !$DB->record_exists(
@@ -1179,7 +1187,8 @@ var local_o365_coursesync_all_set_feature = function(state) {
                         }
                     } else {
                         // A team does not exist for the synced group.
-                        $existingconnection = $grouprecord->o365name . get_string('acp_teamconnections_group_only', 'local_o365');
+                        $existingconnection = s($grouprecord->o365name) .
+                            get_string('acp_teamconnections_group_only', 'local_o365');
 
                         $actions = [html_writer::span(get_string(
                             'acp_teamconnections_table_cannot_create_team_from_group',
@@ -1270,7 +1279,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
      * Update Teams cache.
      */
     public function mode_teamconnections_update_cache() {
-        confirm_sesskey();
+        require_sesskey();
 
         $graphclient = \local_o365\feature\coursesync\utils::get_graphclient();
         // Pass forceupdate=true so an explicit admin request is never silently skipped
@@ -1292,7 +1301,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
         $this->set_title(get_string('acp_teamconnection', 'local_o365'));
 
         $courseid = required_param('course', PARAM_INT);
-        confirm_sesskey();
+        require_sesskey();
 
         $redirecturl = new url('/local/o365/acp.php', ['mode' => 'teamconnections']);
 
@@ -1431,7 +1440,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
         $this->set_title(get_string('acp_teamconnection', 'local_o365'));
 
         $courseid = required_param('course', PARAM_INT);
-        confirm_sesskey();
+        require_sesskey();
 
         $redirecturl = new url('/local/o365/acp.php', ['mode' => 'teamconnections']);
 
@@ -1572,13 +1581,37 @@ var local_o365_coursesync_all_set_feature = function(state) {
     public function mode_maintenance_recreatedeletedgroups() {
         global $DB, $PAGE;
 
+        require_sesskey();
+
         $this->set_title(get_string('acp_maintenance_recreatedeletedgroups', 'local_o365'));
 
-        $coursesenabled = \local_o365\feature\coursesync\utils::get_enabled_courses(true);
+        $url = new url($this->url, ['mode' => 'recreatedeletedgroups']);
+        $PAGE->navbar->add(get_string('acp_maintenance_recreatedeletedgroups', 'local_o365'), $url);
+        $PAGE->requires->jquery();
+
+        $coursesyncsetting = get_config('local_o365', 'coursesync');
+        if ($coursesyncsetting === 'off') {
+            $manageurl = new url('/admin/settings.php', ['section' => 'local_o365_coursesync']);
+            $this->standard_header();
+            echo html_writer::tag(
+                'h5',
+                get_string('acp_maintenance_coursesync_disabled', 'local_o365', $manageurl->out())
+            );
+            $this->standard_footer();
+            return;
+        }
 
         $graphclient = \local_o365\feature\coursesync\utils::get_graphclient();
+        if (!($graphclient instanceof \local_o365\rest\unified)) {
+            $this->standard_header();
+            echo html_writer::tag('h5', get_string('error_not_connected', 'local_o365'));
+            $this->standard_footer();
+            return;
+        }
         $coursesync = new main($graphclient, true);
         $groupids = $coursesync->get_all_group_ids();
+
+        $coursesenabled = \local_o365\feature\coursesync\utils::get_enabled_courses(true);
 
         $sql = "SELECT *
                   FROM {local_o365_objects}
@@ -1642,9 +1675,6 @@ var local_o365_coursesync_all_set_feature = function(state) {
             }
         }
 
-        $url = new url($this->url, ['mode' => 'recreatedeletedgroups']);
-        $PAGE->navbar->add(get_string('acp_maintenance_recreatedeletedgroups', 'local_o365'), $url);
-        $PAGE->requires->jquery();
         $this->standard_header();
         if ($groupcheckstatus) {
             $groupstable = new html_table();
@@ -1664,13 +1694,37 @@ var local_o365_coursesync_all_set_feature = function(state) {
     public function mode_maintenance_resyncgroupusers() {
         global $DB, $PAGE;
 
+        require_sesskey();
+
         $this->set_title(get_string('acp_maintenance_resyncgroupusers', 'local_o365'));
 
         $courseid = optional_param('courseid', 0, PARAM_INT);
         core_php_time_limit::raise();
         raise_memory_limit(MEMORY_EXTRA);
 
+        $url = new url($this->url, ['mode' => 'resyncgroupusers']);
+        $PAGE->navbar->add(get_string('acp_maintenance_resyncgroupusers', 'local_o365'), $url);
+        $PAGE->requires->jquery();
+
+        $coursesyncsetting = get_config('local_o365', 'coursesync');
+        if ($coursesyncsetting === 'off') {
+            $manageurl = new url('/admin/settings.php', ['section' => 'local_o365_coursesync']);
+            $this->standard_header();
+            echo html_writer::tag(
+                'h5',
+                get_string('acp_maintenance_coursesync_disabled', 'local_o365', $manageurl->out())
+            );
+            $this->standard_footer();
+            return;
+        }
+
         $graphclient = \local_o365\feature\coursesync\utils::get_graphclient();
+        if (!($graphclient instanceof \local_o365\rest\unified)) {
+            $this->standard_header();
+            echo html_writer::tag('h5', get_string('error_not_connected', 'local_o365'));
+            $this->standard_footer();
+            return;
+        }
         $coursesync = new main($graphclient, true);
 
         $coursesenabled = \local_o365\feature\coursesync\utils::get_enabled_courses();
@@ -1687,12 +1741,14 @@ var local_o365_coursesync_all_set_feature = function(state) {
             $params[] = $courseid;
         }
 
-        if (is_array($coursesenabled) && !empty($coursesenabled)) {
-            [$coursesinsql, $coursesparams] = $DB->get_in_or_equal($coursesenabled);
-            $sql .= ' AND crs.id ' . $coursesinsql;
-            $params = array_merge($params, $coursesparams);
-        } else {
-            $sql .= ' AND 1 = 0';
+        if ($coursesenabled !== true) {
+            if (is_array($coursesenabled) && !empty($coursesenabled)) {
+                [$coursesinsql, $coursesparams] = $DB->get_in_or_equal($coursesenabled);
+                $sql .= ' AND crs.id ' . $coursesinsql;
+                $params = array_merge($params, $coursesparams);
+            } else {
+                $sql .= ' AND 1 = 0';
+            }
         }
 
         $courses = $DB->get_recordset_sql($sql, $params);
@@ -1715,9 +1771,6 @@ var local_o365_coursesync_all_set_feature = function(state) {
 
         $courses->close();
 
-        $url = new url($this->url, ['mode' => 'resyncgroupusers']);
-        $PAGE->navbar->add(get_string('acp_maintenance_resyncgroupusers', 'local_o365'), $url);
-        $PAGE->requires->jquery();
         $this->standard_header();
         if ($outputsbycourse) {
             $coursetables = new html_table();
@@ -1915,12 +1968,12 @@ var local_o365_coursesync_all_set_feature = function(state) {
         echo html_writer::empty_tag('br');
         echo html_writer::div(get_string('acp_maintenance_warning', 'local_o365'), 'alert alert-info');
 
-        $toolurl = new url($this->url, ['mode' => 'maintenance_resyncgroupusers']);
+        $toolurl = new url($this->url, ['mode' => 'maintenance_resyncgroupusers', 'sesskey' => sesskey()]);
         $toolname = get_string('acp_maintenance_resyncgroupusers', 'local_o365');
         echo html_writer::link($toolurl, $toolname, ['target' => '_blank']);
         echo html_writer::div(get_string('acp_maintenance_resyncgroupusers_desc', 'local_o365'));
 
-        $toolurl = new url($this->url, ['mode' => 'maintenance_recreatedeletedgroups']);
+        $toolurl = new url($this->url, ['mode' => 'maintenance_recreatedeletedgroups', 'sesskey' => sesskey()]);
         $toolname = get_string('acp_maintenance_recreatedeletedgroups', 'local_o365');
         echo html_writer::empty_tag('br');
         echo html_writer::link($toolurl, $toolname, ['target' => '_blank']);
@@ -1941,7 +1994,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
         echo html_writer::div(get_string('cfg_cleanupoidctokens_desc', 'auth_oidc'));
 
         // Clear delta token.
-        $toolurl = new url($this->url, ['mode' => 'maintenance_cleandeltatoken']);
+        $toolurl = new url($this->url, ['mode' => 'maintenance_cleandeltatoken', 'sesskey' => sesskey()]);
         $toolname = get_string('acp_maintenance_cleandeltatoken', 'local_o365');
         echo html_writer::empty_tag('br');
         echo html_writer::link($toolurl, $toolname);
@@ -1955,6 +2008,8 @@ var local_o365_coursesync_all_set_feature = function(state) {
      */
     public function mode_maintenance_cleandeltatoken() {
         global $PAGE;
+
+        require_sesskey();
 
         $this->set_title(get_string('acp_maintenance_cleandeltatoken', 'local_o365'));
 
@@ -2017,7 +2072,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
     public function mode_userconnections_resync(): bool {
         global $DB;
         $userid = required_param('userid', PARAM_INT);
-        confirm_sesskey();
+        require_sesskey();
 
         if (utils::is_connected() !== true) {
             mtrace('Microsoft 365 not configured');
@@ -2056,7 +2111,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
         global $DB, $PAGE;
 
         $userid = required_param('userid', PARAM_INT);
-        confirm_sesskey();
+        require_sesskey();
 
         // Perform prechecks.
         $DB->get_record('user', ['id' => $userid], '*', MUST_EXIST);
@@ -2077,11 +2132,15 @@ var local_o365_coursesync_all_set_feature = function(state) {
         $customdata = ['userid' => $userid];
         $mform = new manualusermatch($redirect, $customdata);
         if ($fromform = $mform->get_data()) {
-            $o365username = trim($fromform->o365username);
+            $o365username = core_text::strtolower(trim($fromform->o365username));
 
-            // Check existing matches for Microsoft user.
-            $existingmatchforo365user = $DB->get_record('local_o365_connections', ['entraidupn' => $o365username]);
-            if (!empty($existingmatchforo365user)) {
+            // Check existing matches for Microsoft user. Compared case-insensitively so legacy rows stored
+            // with different casing (e.g. before entraidupn values were normalized to lower case) are found
+            // too, rather than allowing a duplicate match to be created for the same Microsoft 365 user.
+            $sql = 'SELECT 1
+                      FROM {local_o365_connections}
+                     WHERE ' . $DB->sql_equal('entraidupn', ':entraidupn', false);
+            if ($DB->record_exists_sql($sql, ['entraidupn' => $o365username])) {
                 throw new moodle_exception('acp_userconnections_manualmatch_error_o365usermatched', 'local_o365');
             }
 
@@ -2120,7 +2179,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
         global $DB, $PAGE;
 
         $userid = required_param('userid', PARAM_INT);
-        confirm_sesskey();
+        require_sesskey();
         $user = $DB->get_record('user', ['id' => $userid], '*', MUST_EXIST);
         $confirmed = optional_param('confirmed', 0, PARAM_INT);
         if (!empty($confirmed)) {
@@ -2151,7 +2210,7 @@ var local_o365_coursesync_all_set_feature = function(state) {
 
         require_once($CFG->dirroot . '/auth/oidc/auth.php');
         $userid = required_param('userid', PARAM_INT);
-        confirm_sesskey();
+        require_sesskey();
         $user = $DB->get_record('user', ['id' => $userid], '*', MUST_EXIST);
         $confirmed = optional_param('confirmed', 0, PARAM_INT);
         if (!empty($confirmed)) {
