@@ -527,7 +527,11 @@ class main {
 
         $existinguser = core_user::get_user($muserid);
         $existinguser->timezone = $moodletimezone;
-        user_update_user($existinguser, false, true);
+        if (method_exists('core\\user', 'update_user')) {
+            \core\user::update_user($existinguser, false, true);
+        } else {
+            user_update_user($existinguser, false, true);
+        }
 
         if ($printtrace) {
             $this->mtrace('Timezone applied.');
