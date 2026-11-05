@@ -31,12 +31,34 @@ define(['core/ajax', 'core/str'], function(Ajax, Str) {
     var PAGE_SIZE = 20;
 
     /**
+     * Escape a plain-text value for safe use in HTML.
+     *
+     * Moodle core's autocomplete inserts labels and notices as raw HTML, so any value that
+     * originates from outside Moodle (e.g. Microsoft Graph group names) must be escaped first.
+     *
+     * @param {*} value
+     * @return {string}
+     */
+    function escapeHtml(value) {
+        var div = document.createElement('div');
+        div.textContent = String(value === null || value === undefined ? '' : value);
+        return div.innerHTML;
+    }
+
+    /**
      * Create a paginated autocomplete datasource.
      *
      * @param {Object} options
      * @param {string} options.methodname   Web service method to call for search.
-     * @param {Function} options.mapResult  Maps one WS result item to {value, label}.
+     * @param {Function} options.mapResult  Maps one WS result item to {value, label}. The label is plain text
+     *                                  and is HTML-escaped by this factory.
      * @param {string} options.noResultsKey Lang string key for the zero-results notice (component: local_o365).
+     * @param {Function} [options.extraArgs] Optional (selector) => object merged into the web service call args,
+     *                                        read from the field's data attributes at call time.
+     * @param {Function} [options.getStaticOption] Optional (selector) => {value, label}|null. When it returns a
+     *                                              value, that option is always shown first — before typing and
+     *                                              prepended to every search result page — so it is always
+     *                                              selectable regardless of the search query.
      * @return {{processResults: Function, transport: Function}} Moodle autocomplete datasource.
      */
     function create(options) {
@@ -206,22 +228,37 @@ define(['core/ajax', 'core/str'], function(Ajax, Str) {
         function loadPage(selector) {
             var st = getState(selector);
             var query = st.query;
+            var isFirstPage = st.offset === 0;
+
+            var args = {
+                query: query,
+                offset: st.offset,
+                limit: PAGE_SIZE
+            };
+            if (typeof options.extraArgs === 'function') {
+                Object.assign(args, options.extraArgs(selector));
+            }
 
             Ajax.call([{
                 methodname: options.methodname,
-                args: {
-                    query: query,
-                    offset: st.offset,
-                    limit: PAGE_SIZE
-                }
+                args: args
             }])[0].then(function(response) {
                 if (query !== st.query) {
                     return null;
                 }
 
-                var newItems = response.results.map(options.mapResult);
+                var newItems = response.results.map(options.mapResult).map(function(item) {
+                    return {value: item.value, label: escapeHtml(item.label)};
+                });
                 st.accumulated = st.accumulated.concat(newItems);
                 st.offset += newItems.length;
+
+                if (isFirstPage && typeof options.getStaticOption === 'function') {
+                    var staticOpt = options.getStaticOption(selector);
+                    if (staticOpt) {
+                        st.accumulated = [staticOpt].concat(st.accumulated);
+                    }
+                }
 
                 if (response.hasmore) {
                     st.success(st.accumulated.slice());
@@ -238,7 +275,7 @@ define(['core/ajax', 'core/str'], function(Ajax, Str) {
                 if (st.accumulated.length === 0) {
                     // Return the string promise so the chained .then() below can call
                     // st.success without nesting a .then() inside this callback.
-                    return Str.get_string(options.noResultsKey, 'local_o365', query);
+                    return Str.get_string(options.noResultsKey, 'local_o365', escapeHtml(query));
                 }
 
                 st.success(st.accumulated.slice());
@@ -267,8 +304,14 @@ define(['core/ajax', 'core/str'], function(Ajax, Str) {
                     st.accumulated = [];
                     st.success = null;
                     st.failure = null;
-                    var searchStr = strCache.search || 'Search';
-                    success('<li class="local-o365-dropdown-notice">' + searchStr + '</li>');
+                    var staticOpt = (typeof options.getStaticOption === 'function') ?
+                        options.getStaticOption(selector) : null;
+                    if (staticOpt) {
+                        success([staticOpt]);
+                    } else {
+                        var searchStr = strCache.search || 'Search';
+                        success('<li class="local-o365-dropdown-notice">' + searchStr + '</li>');
+                    }
                     return;
                 }
 

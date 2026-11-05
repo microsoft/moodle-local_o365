@@ -29,6 +29,7 @@ use local_o365\utils;
 defined('MOODLE_INTERNAL') || die();
 
 require_once($CFG->dirroot . '/local/o365/lib.php');
+require_once($CFG->dirroot . '/auth/oidc/lib.php');
 
 /**
  * Update plugin.
@@ -1708,6 +1709,54 @@ function xmldb_local_o365_upgrade($oldversion) {
 
         // O365 savepoint reached.
         upgrade_plugin_savepoint(true, 2026042000.04, 'local', 'o365');
+    }
+
+    if ($oldversion < 2026042001.02) {
+        // The "Microsoft 365 for China" setting has moved to auth_oidc as the "Microsoft cloud" setting.
+        $chineseapi = get_config('local_o365', 'chineseapi');
+        if ($chineseapi !== false) {
+            if (get_config('auth_oidc', 'microsoftcloud') === false) {
+                set_config(
+                    'microsoftcloud',
+                    !empty($chineseapi) ? AUTH_OIDC_MICROSOFT_CLOUD_CHINA : AUTH_OIDC_MICROSOFT_CLOUD_GLOBAL,
+                    'auth_oidc'
+                );
+            }
+
+            unset_config('chineseapi', 'local_o365');
+        }
+
+        // O365 savepoint reached.
+        upgrade_plugin_savepoint(true, 2026042001.02, 'local', 'o365');
+    }
+
+    if ($oldversion < 2026042001.06) {
+        // The minute of the user suspension/deletion running time was previously saved by the settings page under
+        // the wrong config name (with a "local_o365/" prefix), so the user sync task never read it.
+        // Move the value to the correct config name.
+        $wrongname = 'local_o365/usersync_suspension_m';
+        $wrongvalue = get_config('local_o365', $wrongname);
+        if ($wrongvalue !== false) {
+            set_config('usersync_suspension_m', (int) $wrongvalue, 'local_o365');
+            unset_config($wrongname, 'local_o365');
+        }
+
+        // O365 savepoint reached.
+        upgrade_plugin_savepoint(true, 2026042001.06, 'local', 'o365');
+    }
+
+    if ($oldversion < 2026042001.07) {
+        // Remove manual user matches saved with a blank Microsoft 365 username. They can never match a Microsoft 365 user
+        // and only block the Moodle user from being matched properly. The manual match form now rejects blank usernames.
+        $select = $DB->sql_isempty('local_o365_connections', 'entraidupn', false, false);
+        $deleted = $DB->count_records_select('local_o365_connections', $select);
+        if ($deleted) {
+            $DB->delete_records_select('local_o365_connections', $select);
+            mtrace('Removed ' . $deleted . ' user match record(s) with a blank Microsoft 365 username.');
+        }
+
+        // O365 savepoint reached.
+        upgrade_plugin_savepoint(true, 2026042001.07, 'local', 'o365');
     }
 
     return true;

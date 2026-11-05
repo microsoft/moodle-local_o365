@@ -29,6 +29,12 @@ defined('MOODLE_INTERNAL') || die();
 $observers = [
     // Calendar sync.
     [
+        'eventname'   => '\core\event\user_enrolment_created',
+        'callback'    => '\local_o365\feature\calsync\observers::handle_user_enrolment_created',
+        'priority'    => 200,
+        'internal'    => false,
+    ],
+    [
         'eventname'   => '\core\event\user_enrolment_deleted',
         'callback'    => '\local_o365\feature\calsync\observers::handle_user_enrolment_deleted',
         'priority'    => 200,
@@ -123,6 +129,32 @@ $observers = [
     [
         'eventname'   => '\auth_oidc\event\user_loggedin',
         'callback'    => '\local_o365\observers::handle_oidc_user_loggedin',
+        'priority'    => 200,
+        'internal'    => false,
+    ],
+
+    // Channels for Moodle groups.
+    [
+        'eventname'   => '\core\event\group_created',
+        'callback'    => '\local_o365\feature\coursesync\observers::handle_group_created',
+        'priority'    => 200,
+        'internal'    => false,
+    ],
+    [
+        'eventname'   => '\core\event\group_member_added',
+        'callback'    => '\local_o365\feature\coursesync\observers::handle_group_member_added',
+        'priority'    => 200,
+        'internal'    => false,
+    ],
+    [
+        'eventname'   => '\core\event\group_member_removed',
+        'callback'    => '\local_o365\feature\coursesync\observers::handle_group_member_removed',
+        'priority'    => 200,
+        'internal'    => false,
+    ],
+    [
+        'eventname'   => '\core\event\group_deleted',
+        'callback'    => '\local_o365\feature\coursesync\observers::handle_group_deleted',
         'priority'    => 200,
         'internal'    => false,
     ],

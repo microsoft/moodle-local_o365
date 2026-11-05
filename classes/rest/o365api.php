@@ -27,6 +27,10 @@ namespace local_o365\rest;
 
 use moodle_exception;
 
+defined('MOODLE_INTERNAL') || die();
+
+require_once($CFG->dirroot . '/auth/oidc/lib.php');
+
 /**
  * Abstract base class for all o365 REST api classes.
  */
@@ -68,8 +72,7 @@ abstract class o365api {
      * @return bool Whether we should use the chinese API (true), or not (false).
      */
     public static function use_chinese_api() {
-        $chineseapi = get_config('local_o365', 'chineseapi');
-        return (!empty($chineseapi)) ? true : false;
+        return auth_oidc_use_chinese_api();
     }
 
     /**
@@ -418,6 +421,12 @@ abstract class o365api {
                 ],
             ],
         ];
+        if (get_config('local_o365', 'coursesyncgroupchannels')) {
+            // Only needed when a channel is created for each Moodle group.
+            $apis['graph']['requiredAppPermissions']['Channel.Create'] = [];
+            $apis['graph']['requiredAppPermissions']['ChannelMember.ReadWrite.All'] = [];
+        }
+
         if (!empty($api)) {
             if (!isset($apis[$api])) {
                 throw new moodle_exception('errornoapifound', 'local_o365', '', $api);

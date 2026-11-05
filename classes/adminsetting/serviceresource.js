@@ -74,7 +74,12 @@ $(function() {
                             if (resp.data.valid === true) {
                                 main.successmessage(opts.strvalid);
                             } else {
-                                main.errormessage(opts.strinvalid);
+                                var invalidmessage = opts.strinvalid;
+                                if (typeof(resp.data.reason) === 'string' && resp.data.reason !== '') {
+                                    invalidmessage += ' (' + resp.data.reason + ')';
+                                }
+
+                                main.errormessage(invalidmessage);
                             }
                             return true;
                         }
@@ -132,13 +137,13 @@ $(function() {
         this.successmessage = function(message) {
             main.find('.local_o365_statusmessage').show().removeClass('alert-error').removeClass('alert-info').addClass('alert-success');
             main.find('.local_o365_statusmessage').find('img.smallicon').replaceWith(opts.iconvalid);
-            main.find('.local_o365_statusmessage').find('.statusmessage').html(message);
+            main.find('.local_o365_statusmessage').find('.statusmessage').text(message);
         }
 
         this.errormessage = function(message) {
             main.find('.local_o365_statusmessage').show().removeClass('alert-success').removeClass('alert-info').addClass('alert-error');
             main.find('.local_o365_statusmessage').find('img.smallicon').replaceWith(opts.iconinvalid);
-            main.find('.local_o365_statusmessage').find('.statusmessage').html(message);
+            main.find('.local_o365_statusmessage').find('.statusmessage').text(message);
         }
 
         this.input.on('input', function(e) {

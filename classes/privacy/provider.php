@@ -34,8 +34,11 @@ use core_privacy\local\request\contextlist;
 use core_privacy\local\request\approved_contextlist;
 use core_privacy\local\request\core_userlist_provider;
 use core_privacy\local\request\plugin\provider as plugin_provider;
+use core_privacy\local\request\user_preference_provider;
+use core_privacy\local\request\transform;
 use core_privacy\local\request\userlist;
 use core_privacy\local\request\writer;
+use local_o365\feature\usersync\main;
 use stdClass;
 
 /**
@@ -44,7 +47,8 @@ use stdClass;
 class provider implements
     core_userlist_provider,
     metadata_provider,
-    plugin_provider {
+    plugin_provider,
+    user_preference_provider {
     /**
      * Returns metadata about this system.
      *
@@ -127,7 +131,45 @@ class provider implements
             );
         }
 
+        $collection->add_user_preference(
+            main::SUSPENDED_TIME_PREFERENCE,
+            'privacy:metadata:preference:suspendedtime'
+        );
+
+        $collection->add_user_preference(
+            \local_o365\feature\calsync\autosubscribe::PREF_INITIALISED,
+            'privacy:metadata:preference:calsync_initialised'
+        );
+
         return $collection;
+    }
+
+    /**
+     * Export all user preferences for the plugin.
+     *
+     * @param int $userid The ID of the user whose preferences are being exported.
+     */
+    public static function export_user_preferences(int $userid): void {
+        $suspendedtime = get_user_preferences(main::SUSPENDED_TIME_PREFERENCE, null, $userid);
+        if ($suspendedtime !== null) {
+            writer::export_user_preference(
+                'local_o365',
+                main::SUSPENDED_TIME_PREFERENCE,
+                transform::datetime((int) $suspendedtime),
+                get_string('privacy:metadata:preference:suspendedtime', 'local_o365')
+            );
+        }
+
+        $calsyncpref = \local_o365\feature\calsync\autosubscribe::PREF_INITIALISED;
+        $calsyncinitialised = get_user_preferences($calsyncpref, null, $userid);
+        if ($calsyncinitialised !== null) {
+            writer::export_user_preference(
+                'local_o365',
+                $calsyncpref,
+                transform::yesno($calsyncinitialised),
+                get_string('privacy:metadata:preference:calsync_initialised', 'local_o365')
+            );
+        }
     }
 
     /**
@@ -224,7 +266,7 @@ class provider implements
     }
 
     /**
-     * Return true if the specified userid has data in any local_o365 tables.
+     * Return true if the specified userid has data in any local_o365 tables or the suspended time user preference.
      *
      * @param int $userid The user to check for.
      * @return boolean
@@ -246,7 +288,7 @@ class provider implements
             }
         }
 
-        return false;
+        return $DB->record_exists('user_preferences', ['userid' => $userid, 'name' => main::SUSPENDED_TIME_PREFERENCE]);
     }
 
     /**
@@ -268,6 +310,8 @@ class provider implements
         foreach ($tables as $table => $filterparams) {
             $DB->delete_records($table, $filterparams);
         }
+
+        $DB->delete_records('user_preferences', ['userid' => $userid, 'name' => main::SUSPENDED_TIME_PREFERENCE]);
     }
 
     /**

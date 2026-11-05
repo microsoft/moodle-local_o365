@@ -350,7 +350,7 @@ class observers {
      * @return bool Success/Failure.
      */
     public static function get_additional_user_info(int $userid): bool {
-        global $DB;
+        global $DB, $USER;
 
         try {
             // Graph API must be configured for us to fetch data.
@@ -404,6 +404,12 @@ class observers {
             $usersync = new feature\usersync\main();
             if (isset($usersyncsettings['photosynconlogin'])) {
                 $usersync->assign_photo($userid);
+
+                // The session user object was loaded before the photo changed; refresh the picture so that
+                // the new photo is shown immediately instead of after the next login.
+                if (!empty($USER->id) && $USER->id == $userid) {
+                    $USER->picture = $DB->get_field('user', 'picture', ['id' => $userid]);
+                }
             }
 
             if (isset($usersyncsettings['tzsynconlogin'])) {
@@ -846,8 +852,7 @@ class observers {
                     // Clear local_o365_token table.
                     $DB->delete_records('local_o365_token');
 
-                    // Clear auth_oidc_token table.
-                    $DB->delete_records('auth_oidc_token');
+                    // The auth_oidc_token table is cleared by auth_oidc's own observer on this event.
 
                     // Clear local_o365_connections table.
                     $DB->delete_records('local_o365_connections');

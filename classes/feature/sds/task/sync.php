@@ -181,7 +181,7 @@ class sync extends scheduled_task {
                             }
 
                             // Save user profile.
-                            user_update_user($completeuser, false, false);
+                            \core\user::update_user($completeuser, false, false);
                             profile_save_data($completeuser);
 
                             static::mtrace('User profile updated', 4);
@@ -336,10 +336,11 @@ class sync extends scheduled_task {
                 }
 
                 // Create the course.
+                [$courseshortname, $coursefullname] = static::get_class_course_names($schoolclass);
                 $course = static::get_or_create_class_course(
                     $schoolclass['id'],
-                    $schoolclass['mailNickname'],
-                    $schoolclass['displayName'],
+                    $courseshortname,
+                    $coursefullname,
                     $coursecat->id,
                     $classstartdate,
                     $classenddate
@@ -491,9 +492,14 @@ class sync extends scheduled_task {
                     $classmembers = is_array($classmembers) ? $classmembers : [];
                     static::mtrace('API returned ' . count($classmembers) . ' members for class ' . $schoolclass['id'], 5);
                     foreach ($classmembers as $classmember) {
-                        if (!in_array($classmember['id'], $teachersobjectids)) {
-                            $classuserids[] = $classmember['id'];
+                        if (in_array($classmember['id'], $teachersobjectids)) {
+                            // This member is also a class teacher (SDS lists teachers as class
+                            // members as well). They were already handled by the teacher loop
+                            // above and must not additionally receive the student role.
+                            continue;
                         }
+
+                        $classuserids[] = $classmember['id'];
 
                         $objectrec = $DB->get_record('local_o365_objects', ['type' => 'user', 'objectid' => $classmember['id']]);
                         if (empty($objectrec)) {
@@ -805,6 +811,55 @@ class sync extends scheduled_task {
         $DB->insert_record('local_o365_objects', $objectrec);
 
         return $course;
+    }
+
+    /**
+     * Determine the short name and full name to use for the Moodle course of an SDS class.
+     *
+     * The source properties are configurable. The mail nickname and display name are used when the configured
+     * property is empty, and the mail nickname is used when the configured short name is already used by a course
+     * linked to a different SDS class, since Moodle course short names must be unique.
+     *
+     * @param array $schoolclass The education class resource returned by the API.
+     * @return array The course short name and full name.
+     */
+    public static function get_class_course_names(array $schoolclass): array {
+        global $DB;
+
+        $allowedfields = ['mailNickname', 'displayName', 'classCode', 'externalName'];
+
+        $shortnamefield = get_config('local_o365', 'sdscourseshortnamefield');
+        if (!in_array($shortnamefield, $allowedfields, true)) {
+            $shortnamefield = 'mailNickname';
+        }
+        $fullnamefield = get_config('local_o365', 'sdscoursefullnamefield');
+        if (!in_array($fullnamefield, $allowedfields, true)) {
+            $fullnamefield = 'displayName';
+        }
+
+        $shortname = trim((string) ($schoolclass[$shortnamefield] ?? ''));
+        $fullname = trim((string) ($schoolclass[$fullnamefield] ?? ''));
+
+        if ($shortname === '') {
+            $shortname = $schoolclass['mailNickname'];
+        } else if ($shortnamefield !== 'mailNickname') {
+            // Course short name max length is 100.
+            $shortname = core_text::substr($shortname, 0, 100);
+            $conflictingcourse = $DB->get_record('course', ['shortname' => $shortname], 'id');
+            if (!empty($conflictingcourse)) {
+                $params = ['type' => 'sdssection', 'subtype' => 'course', 'moodleid' => $conflictingcourse->id];
+                $linkedobject = $DB->get_record('local_o365_objects', $params, 'id, objectid', IGNORE_MULTIPLE);
+                if (!empty($linkedobject) && $linkedobject->objectid !== $schoolclass['id']) {
+                    static::mtrace('Short name ' . $shortname . ' is already used by another class, using mail nickname.', 4);
+                    $shortname = $schoolclass['mailNickname'];
+                }
+            }
+        }
+        if ($fullname === '') {
+            $fullname = $schoolclass['displayName'];
+        }
+
+        return [$shortname, $fullname];
     }
 
     /**

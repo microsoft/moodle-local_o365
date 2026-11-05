@@ -289,6 +289,167 @@ final class usersync_test extends advanced_testcase {
     }
 
     /**
+     * Test that update_user_from_entra_id_data() clears a mapped Moodle profile field when Microsoft
+     * Entra ID returns the field explicitly as null, rather than leaving the previously-synced value
+     * in place. Graph's $select response returns a selected-but-unset field as null instead of
+     * omitting the key entirely, which apply_configured_fieldmap() must treat as "clear this field".
+     *
+     * @covers \local_o365\feature\usersync\main::update_user_from_entra_id_data
+     * @covers \local_o365\feature\usersync\main::apply_configured_fieldmap
+     */
+    public function test_update_user_from_entra_id_data_clears_field_on_null(): void {
+        global $DB;
+
+        $httpclient = new mockhttpclient();
+        $clientdata = $this->get_mock_clientdata();
+        $usersync = new main($clientdata, $httpclient);
+
+        $entraiddata = [
+            'odata.type' => 'Microsoft.WindowsAzure.ActiveDirectory.User',
+            'objectType' => 'User',
+            'objectId' => '00000000-0000-0000-0000-000000000099',
+            'id' => '00000000-0000-0000-0000-000000000099',
+            'city' => 'Toronto',
+            'country' => 'CA',
+            'department' => 'Dev',
+            'givenName' => 'Test',
+            'mail' => 'testuser99@example.onmicrosoft.com',
+            'surname' => 'User99',
+            'userPrincipalName' => 'testuser99@example.onmicrosoft.com',
+            'useridentifier' => 'testuser99@example.onmicrosoft.com',
+            'useridentifierlower' => 'testuser99@example.onmicrosoft.com',
+            'upnsplit0' => 'testuser99',
+        ];
+
+        $usersync->create_user_from_entra_id_data($entraiddata, []);
+
+        $existinguser = $DB->get_record('user', ['username' => $entraiddata['mail']], '*', MUST_EXIST);
+        $this->assertSame('Toronto', $existinguser->city);
+        $this->assertSame('CA', $existinguser->country);
+        $this->assertSame('Dev', $existinguser->department);
+
+        // Simulate the fields being cleared in Microsoft Entra ID: Graph's $select response returns
+        // the keys explicitly as null rather than omitting them.
+        $entraiddata['city'] = null;
+        $entraiddata['country'] = null;
+        $entraiddata['department'] = null;
+
+        $usersync->update_user_from_entra_id_data($entraiddata, $existinguser);
+
+        $updateduser = $DB->get_record('user', ['id' => $existinguser->id], '*', MUST_EXIST);
+        $this->assertSame('', $updateduser->city);
+        $this->assertSame('', $updateduser->country);
+        $this->assertSame('', $updateduser->department);
+    }
+
+    /**
+     * When Microsoft Entra ID provides no 'mail' attribute for a user being synced (for example, a cloud-only
+     * account with no Exchange Online mailbox), and placeholder email generation is disabled (the default),
+     * the user must still be created, with their email address left unset rather than the sync failing.
+     *
+     * Regression test for https://github.com/microsoft/o365-moodle/issues/2839.
+     *
+     * @return void
+     * @covers \local_o365\feature\usersync\main::create_user_from_entra_id_data
+     * @covers \local_o365\feature\usersync\main::apply_configured_fieldmap
+     */
+    public function test_create_user_from_entra_id_data_leaves_email_unset_when_no_mail_and_generation_disabled(): void {
+        global $DB;
+
+        $entraiddata = [
+            'odata.type' => 'Microsoft.WindowsAzure.ActiveDirectory.User',
+            'objectType' => 'User',
+            'objectId' => '00000000-0000-0000-0000-000000000005',
+            'id' => '00000000-0000-0000-0000-000000000005',
+            'givenName' => 'Test',
+            'surname' => 'User5',
+            'userPrincipalName' => 'CONTOSO\\testuser5',
+            'useridentifier' => 'testuser5',
+        ];
+
+        $httpclient = new mockhttpclient();
+        $clientdata = $this->get_mock_clientdata();
+        $usersync = new main($clientdata, $httpclient);
+        $usersync->create_user_from_entra_id_data($entraiddata, []);
+
+        $createduser = $DB->get_record('user', ['username' => 'testuser5', 'auth' => 'oidc']);
+        $this->assertNotFalse($createduser);
+        $this->assertSame('', $createduser->email);
+    }
+
+    /**
+     * When Microsoft Entra ID provides no 'mail' attribute for a user being synced, and the site is configured
+     * to generate a placeholder address, the user sync task must apply the generated placeholder email
+     * address to the newly created user, the same way the OIDC login flow does.
+     *
+     * Regression test for https://github.com/microsoft/o365-moodle/issues/2839.
+     *
+     * @return void
+     * @covers \local_o365\feature\usersync\main::create_user_from_entra_id_data
+     * @covers \local_o365\feature\usersync\main::apply_configured_fieldmap
+     */
+    public function test_create_user_from_entra_id_data_generates_placeholder_email_when_no_mail_received(): void {
+        global $DB;
+
+        set_config('generatedummyemail', 1, 'auth_oidc');
+        set_config('dummyemaildomain', 'example.test', 'auth_oidc');
+
+        $entraiddata = [
+            'odata.type' => 'Microsoft.WindowsAzure.ActiveDirectory.User',
+            'objectType' => 'User',
+            'objectId' => '00000000-0000-0000-0000-000000000006',
+            'id' => '00000000-0000-0000-0000-000000000006',
+            'givenName' => 'Test',
+            'surname' => 'User6',
+            'userPrincipalName' => 'CONTOSO\\testuser6',
+            'useridentifier' => 'testuser6',
+        ];
+
+        $httpclient = new mockhttpclient();
+        $clientdata = $this->get_mock_clientdata();
+        $usersync = new main($clientdata, $httpclient);
+        $usersync->create_user_from_entra_id_data($entraiddata, []);
+
+        $createduser = $DB->get_record('user', ['username' => 'testuser6', 'auth' => 'oidc']);
+        $this->assertNotFalse($createduser);
+        $this->assertSame('contosotestuser6@example.test', $createduser->email);
+    }
+
+    /**
+     * When Microsoft Graph is configured, Entra ID user data carries the object ID under 'id' rather than
+     * 'objectId'. The placeholder email fallback must still find it, so a Graph-synced user with neither a
+     * mail attribute nor a usable UPN still gets a generated placeholder address instead of none at all.
+     *
+     * Regression test for https://github.com/microsoft/o365-moodle/issues/2839.
+     *
+     * @return void
+     * @covers \local_o365\feature\usersync\main::create_user_from_entra_id_data
+     * @covers \local_o365\feature\usersync\main::apply_configured_fieldmap
+     */
+    public function test_create_user_from_entra_id_data_generates_placeholder_email_using_graph_id_field(): void {
+        global $DB;
+
+        set_config('generatedummyemail', 1, 'auth_oidc');
+        set_config('dummyemaildomain', 'example.test', 'auth_oidc');
+
+        $entraiddata = [
+            'id' => '00000000-0000-0000-0000-000000000007',
+            'givenName' => 'Test',
+            'surname' => 'User7',
+            'useridentifier' => 'testuser7',
+        ];
+
+        $httpclient = new mockhttpclient();
+        $clientdata = $this->get_mock_clientdata();
+        $usersync = new main($clientdata, $httpclient);
+        $usersync->create_user_from_entra_id_data($entraiddata, []);
+
+        $createduser = $DB->get_record('user', ['username' => 'testuser7', 'auth' => 'oidc']);
+        $this->assertNotFalse($createduser);
+        $this->assertSame('00000000-0000-0000-0000-000000000007@example.test', $createduser->email);
+    }
+
+    /**
      * Test sync_users method when creating users.
      *
      * @covers \local_o365\feature\usersync\main::sync_users
@@ -500,7 +661,8 @@ final class usersync_test extends advanced_testcase {
     }
 
     /**
-     * Test accountEnabled gating: suspended users with accountEnabled=0 are not re-enabled.
+     * Test accountEnabled gating: suspended users with accountEnabled=0 are not re-enabled by 'reenable', even when
+     * 'disabledsyncreenable' is off, while suspended users with accountEnabled=1 are.
      *
      * @covers \local_o365\feature\usersync\main::process_user_status_from_temp_table
      */
@@ -509,48 +671,67 @@ final class usersync_test extends advanced_testcase {
 
         set_config('usersync', 'create', 'local_o365');
         set_config('usersync_reenable', 1, 'local_o365');
-        set_config('usersync_disabledsync', 1, 'local_o365');
 
-        $user1 = $this->getDataGenerator()->create_user();
-        $user1->suspended = 1;
-        $user1->auth = 'oidc';
-        $DB->update_record('user', $user1);
+        $blockeduser = $this->getDataGenerator()->create_user(['auth' => 'oidc', 'suspended' => 1]);
+        $alloweduser = $this->getDataGenerator()->create_user(['auth' => 'oidc', 'suspended' => 1]);
 
         $DB->insert_record('local_o365_objects', (object) [
             'type' => 'user',
-            'moodleid' => $user1->id,
-            'objectid' => 'entra-user-1',
-            'o365name' => $user1->email,
+            'moodleid' => $blockeduser->id,
+            'objectid' => 'entra-user-blocked',
+            'o365name' => $blockeduser->email,
+            'timecreated' => time(),
+            'timemodified' => time(),
+        ]);
+        $DB->insert_record('local_o365_objects', (object) [
+            'type' => 'user',
+            'moodleid' => $alloweduser->id,
+            'objectid' => 'entra-user-allowed',
+            'o365name' => $alloweduser->email,
             'timecreated' => time(),
             'timemodified' => time(),
         ]);
 
         $usersync = new main();
-        $temptablename = $usersync->create_entra_users_temp_table();
 
-        try {
-            // User has accountEnabled=0 in Entra.
-            $DB->insert_records($temptablename, [
-                (object) ['objectid' => 'entra-user-1', 'accountenabled' => 0],
-            ]);
+        foreach ([false, true] as $dodisabledsyncreenable) {
+            $DB->set_field('user', 'suspended', 1, ['id' => $blockeduser->id]);
+            $DB->set_field('user', 'suspended', 1, ['id' => $alloweduser->id]);
 
-            // Process with dodisabledsyncreenable=true.
-            [$reenabled, $suspended, $deleted] = $usersync->process_user_status_from_temp_table(
-                $temptablename,
-                true, // Re-enable suspended users.
-                false, // Do not suspend.
-                false, // Do not delete.
-                false, // Do not suspend on disabled accounts.
-                true  // Check account enabled status.
-            );
+            $temptablename = $usersync->create_entra_users_temp_table();
 
-            $this->assertEquals(0, $reenabled);
+            try {
+                $DB->insert_records($temptablename, [
+                    (object) ['objectid' => 'entra-user-blocked', 'accountenabled' => 0],
+                    (object) ['objectid' => 'entra-user-allowed', 'accountenabled' => 1],
+                ]);
 
-            // User should still be suspended.
-            $user1refresh = $DB->get_record('user', ['id' => $user1->id]);
-            $this->assertEquals(1, $user1refresh->suspended);
-        } finally {
-            $usersync->drop_entra_users_temp_table($temptablename);
+                [$reenabled, $suspended, $deleted] = $usersync->process_user_status_from_temp_table(
+                    $temptablename,
+                    true, // Re-enable suspended users.
+                    false, // Do not suspend.
+                    false, // Do not delete.
+                    false, // Do not suspend on disabled accounts.
+                    $dodisabledsyncreenable
+                );
+
+                $this->assertEquals(1, $reenabled);
+                $this->assertEquals(0, $suspended);
+                $this->assertEquals(0, $deleted);
+
+                $this->assertEquals(
+                    1,
+                    $DB->get_field('user', 'suspended', ['id' => $blockeduser->id]),
+                    'User blocked from signing in to Entra should remain suspended.'
+                );
+                $this->assertEquals(
+                    0,
+                    $DB->get_field('user', 'suspended', ['id' => $alloweduser->id]),
+                    'User allowed to sign in to Entra should be re-enabled.'
+                );
+            } finally {
+                $usersync->drop_entra_users_temp_table($temptablename);
+            }
         }
     }
 
@@ -600,6 +781,253 @@ final class usersync_test extends advanced_testcase {
             // Verify user is suspended.
             $user1refresh = $DB->get_record('user', ['id' => $user1->id]);
             $this->assertEquals(1, $user1refresh->suspended);
+        } finally {
+            $usersync->drop_entra_users_temp_table($temptablename);
+        }
+    }
+
+    /**
+     * Create an OIDC user mapped to an Entra object, for the status processing tests.
+     *
+     * @param string $objectid The Entra object ID.
+     * @param int $suspended Whether the user is suspended.
+     * @return \stdClass The Moodle user.
+     */
+    protected function create_mapped_oidc_user(string $objectid, int $suspended): \stdClass {
+        global $DB;
+
+        $user = $this->getDataGenerator()->create_user();
+        $user->auth = 'oidc';
+        $user->suspended = $suspended;
+        $DB->update_record('user', $user);
+
+        $now = time();
+        $DB->insert_record('local_o365_objects', (object) [
+            'type' => 'user',
+            'subtype' => '',
+            'objectid' => $objectid,
+            'moodleid' => $user->id,
+            'o365name' => $user->email,
+            'tenant' => '',
+            'timecreated' => $now,
+            'timemodified' => $now,
+        ]);
+
+        return $user;
+    }
+
+    /**
+     * Get a user sync instance whose Entra deleted-users list is empty (soft-delete retention expired for everyone).
+     *
+     * @return main
+     */
+    protected function get_usersync_with_empty_deleted_items(): main {
+        $apiclient = new class {
+            /**
+             * Return no deleted users.
+             *
+             * @param callable $callback Batch callback, never called.
+             */
+            public function process_deleted_users_batched(callable $callback): void {
+            }
+        };
+
+        return new class ($apiclient) extends main {
+            /**
+             * Test API client.
+             *
+             * @var object
+             */
+            private object $testapiclient;
+
+            /**
+             * Constructor.
+             *
+             * @param object $apiclient Test API client.
+             */
+            public function __construct(object $apiclient) {
+                parent::__construct();
+                $this->testapiclient = $apiclient;
+            }
+
+            /**
+             * Return the test API client.
+             *
+             * @return object
+             */
+            public function construct_user_api() {
+                return $this->testapiclient;
+            }
+        };
+    }
+
+    /**
+     * Test that suspending a user records the suspension time, and re-enabling the user clears it.
+     *
+     * @covers \local_o365\feature\usersync\main::process_user_status_from_temp_table
+     */
+    public function test_process_user_status_suspension_time_preference(): void {
+        global $DB;
+
+        $user = $this->create_mapped_oidc_user('entra-user-gone', 0);
+
+        $usersync = new main();
+        $temptablename = $usersync->create_entra_users_temp_table();
+
+        try {
+            $before = time();
+            $usersync->process_user_status_from_temp_table($temptablename, false, true, false, false, false);
+            $suspendedtime = (int) get_user_preferences(main::SUSPENDED_TIME_PREFERENCE, 0, $user->id);
+            $this->assertGreaterThanOrEqual($before, $suspendedtime);
+            $this->assertLessThanOrEqual(time(), $suspendedtime);
+
+            // The user reappears in Entra and is re-enabled, so the marker is removed.
+            $DB->insert_records($temptablename, [(object) ['objectid' => 'entra-user-gone', 'accountenabled' => 1]]);
+            [$reenabled] = $usersync->process_user_status_from_temp_table($temptablename, true, true, false, false, false);
+            $this->assertEquals(1, $reenabled);
+            $this->assertEquals(0, $DB->get_field('user', 'suspended', ['id' => $user->id]));
+            $this->assertFalse($DB->record_exists('user_preferences', [
+                'userid' => $user->id,
+                'name' => main::SUSPENDED_TIME_PREFERENCE,
+            ]));
+        } finally {
+            $usersync->drop_entra_users_temp_table($temptablename);
+        }
+    }
+
+    /**
+     * Test that suspended users are only deleted once the configured delay since suspension has passed.
+     *
+     * @covers \local_o365\feature\usersync\main::process_user_status_from_temp_table
+     */
+    public function test_process_user_status_delete_delay(): void {
+        global $DB;
+
+        $delay = 30 * DAYSECS;
+        set_config('usersync_delete_delay', $delay, 'local_o365');
+
+        $recent = $this->create_mapped_oidc_user('entra-user-recent', 1);
+        set_user_preference(main::SUSPENDED_TIME_PREFERENCE, time() - 10 * DAYSECS, $recent->id);
+        $expired = $this->create_mapped_oidc_user('entra-user-expired', 1);
+        set_user_preference(main::SUSPENDED_TIME_PREFERENCE, time() - 40 * DAYSECS, $expired->id);
+        $legacy = $this->create_mapped_oidc_user('entra-user-legacy', 1);
+
+        $usersync = $this->get_usersync_with_empty_deleted_items();
+        $temptablename = $usersync->create_entra_users_temp_table();
+
+        try {
+            $before = time();
+            [$reenabled, $suspended, $deleted] = $usersync->process_user_status_from_temp_table(
+                $temptablename,
+                false,
+                true,
+                true,
+                false,
+                false
+            );
+
+            // Only the user suspended for longer than the delay is deleted.
+            $this->assertEquals(1, $deleted);
+            $this->assertEquals(0, $DB->get_field('user', 'deleted', ['id' => $recent->id]));
+            $this->assertEquals(1, $DB->get_field('user', 'deleted', ['id' => $expired->id]));
+            $this->assertEquals(0, $DB->get_field('user', 'deleted', ['id' => $legacy->id]));
+
+            // The user suspended before the delay was tracked has their clock started now.
+            $legacytime = (int) get_user_preferences(main::SUSPENDED_TIME_PREFERENCE, 0, $legacy->id);
+            $this->assertGreaterThanOrEqual($before, $legacytime);
+
+            // Without a delay, the remaining suspended users are deleted straight away.
+            set_config('usersync_delete_delay', 0, 'local_o365');
+            [$reenabled, $suspended, $deleted] = $usersync->process_user_status_from_temp_table(
+                $temptablename,
+                false,
+                true,
+                true,
+                false,
+                false
+            );
+            $this->assertEquals(2, $deleted);
+            $this->assertEquals(1, $DB->get_field('user', 'deleted', ['id' => $recent->id]));
+            $this->assertEquals(1, $DB->get_field('user', 'deleted', ['id' => $legacy->id]));
+        } finally {
+            $usersync->drop_entra_users_temp_table($temptablename);
+        }
+    }
+
+    /**
+     * Test that users from additional tenants are neither suspended nor deleted, while hosting tenant users still are.
+     *
+     * @covers \local_o365\feature\usersync\main::process_user_status_from_temp_table
+     * @covers \local_o365\feature\usersync\main::get_additional_tenant_domains
+     * @covers \local_o365\feature\usersync\main::is_additional_tenant_user
+     */
+    public function test_process_user_status_skips_additional_tenant_users(): void {
+        global $DB;
+
+        set_config('multitenants', json_encode(['tenant-2' => ['Example.ac.at', 'other.example.ac.at']]), 'local_o365');
+        set_config('legacymultitenants', json_encode(['legacy.example.org']), 'local_o365');
+
+        $users = [
+            'hosting' => ['upn' => 'hosting@host.example.com', 'suspended' => 0],
+            'additional' => ['upn' => 'user@EXAMPLE.ac.at', 'suspended' => 0],
+            'additionalsuspended' => ['upn' => 'old@other.example.ac.at', 'suspended' => 1],
+            'hostingsuspended' => ['upn' => 'gone@host.example.com', 'suspended' => 1],
+            'legacy' => ['upn' => 'user@legacy.example.org', 'suspended' => 0],
+        ];
+        foreach ($users as $key => $data) {
+            $user = $this->getDataGenerator()->create_user();
+            $user->auth = 'oidc';
+            $user->suspended = $data['suspended'];
+            $DB->update_record('user', $user);
+            $users[$key]['id'] = $user->id;
+
+            $DB->insert_record('local_o365_objects', (object) [
+                'type' => 'user',
+                'moodleid' => $user->id,
+                'objectid' => 'entra-' . $key,
+                'o365name' => $data['upn'],
+                'timecreated' => time(),
+                'timemodified' => time(),
+            ]);
+        }
+
+        // Deleting needs the list of soft-deleted Entra users, so serve an empty one from a mock HTTP client.
+        $httpclient = new mockhttpclient();
+        $httpclient->set_response(json_encode(['value' => []]));
+        $apiclient = new unified($this->get_mock_token(), $httpclient);
+        $usersync = $this->getMockBuilder(main::class)->onlyMethods(['construct_user_api'])->getMock();
+        $usersync->method('construct_user_api')->willReturn($apiclient);
+        $temptablename = $usersync->create_entra_users_temp_table();
+
+        try {
+            // Empty temp table - none of the users are in the hosting tenant's Entra user list.
+            [$reenabled, $suspended, $deleted] = $usersync->process_user_status_from_temp_table(
+                $temptablename,
+                false, // Do not re-enable.
+                true, // Suspend deleted users.
+                true, // Delete suspended users.
+                false, // Do not suspend on disabled accounts.
+                false  // Do not check account status.
+            );
+
+            $this->assertEquals(0, $reenabled);
+            $this->assertEquals(1, $suspended);
+            $this->assertEquals(1, $deleted);
+
+            // Hosting tenant users are suspended / deleted as before.
+            $this->assertEquals(1, $DB->get_field('user', 'suspended', ['id' => $users['hosting']['id']]));
+            $this->assertEquals(1, $DB->get_field('user', 'deleted', ['id' => $users['hostingsuspended']['id']]));
+
+            // Additional tenant users are untouched, matching domains case-insensitively.
+            $additional = $DB->get_record('user', ['id' => $users['additional']['id']]);
+            $this->assertEquals(0, $additional->suspended);
+            $this->assertEquals(0, $additional->deleted);
+            $legacy = $DB->get_record('user', ['id' => $users['legacy']['id']]);
+            $this->assertEquals(0, $legacy->suspended);
+            $this->assertEquals(0, $legacy->deleted);
+            $additionalsuspended = $DB->get_record('user', ['id' => $users['additionalsuspended']['id']]);
+            $this->assertEquals(1, $additionalsuspended->suspended);
+            $this->assertEquals(0, $additionalsuspended->deleted);
         } finally {
             $usersync->drop_entra_users_temp_table($temptablename);
         }
@@ -668,6 +1096,389 @@ final class usersync_test extends advanced_testcase {
                 1,
                 $DB->get_field('user', 'suspended', ['id' => $alreadysuspendeduser->id]),
                 'Already-suspended user should remain suspended.'
+            );
+        } finally {
+            $usersync->drop_entra_users_temp_table($temptablename);
+        }
+    }
+
+    /**
+     * Test that 'suspendnolink' suspends oidc accounts with no local_o365_objects record, matching by username, and
+     * leaves alone accounts that are still present and enabled in Entra as well as non-oidc accounts.
+     *
+     * @covers \local_o365\feature\usersync\main::process_user_status_from_temp_table
+     * @covers \local_o365\feature\usersync\main::suspend_unlinked_users_from_temp_table
+     */
+    public function test_process_user_status_suspend_unlinked(): void {
+        global $DB;
+
+        // Binding username claim must be a specific resolvable field for unlinked matching to run.
+        set_config('bindingusernameclaim', 'upn', 'auth_oidc');
+
+        $generator = $this->getDataGenerator();
+        // Orphan oidc account (no local_o365_objects record) that is missing from Entra.
+        $deletedorphan = $generator->create_user(['auth' => 'oidc', 'suspended' => 0]);
+        // Orphan oidc account still present and enabled in Entra - must be left alone.
+        $liveorphan = $generator->create_user(['auth' => 'oidc', 'suspended' => 0]);
+        // Non-oidc account whose username matches an Entra account - must never be touched.
+        $manualuser = $generator->create_user(['auth' => 'manual', 'suspended' => 0]);
+        // Orphan missing from Entra but already suspended - reported only, not re-counted.
+        $suspendedorphan = $generator->create_user(['auth' => 'oidc', 'suspended' => 1]);
+
+        $usersync = new main();
+        $temptablename = $usersync->create_entra_users_temp_table();
+
+        try {
+            $DB->insert_records($temptablename, [
+                (object) ['objectid' => 'obj-live', 'accountenabled' => 1, 'bindingvalue' => $liveorphan->username],
+                (object) ['objectid' => 'obj-manual', 'accountenabled' => 1, 'bindingvalue' => $manualuser->username],
+            ]);
+
+            [$reenabled, $suspended, $deleted] = $usersync->process_user_status_from_temp_table(
+                $temptablename,
+                false, // Do not re-enable.
+                true, // Suspend deleted users.
+                false, // Do not delete.
+                false, // Do not suspend on disabled accounts.
+                false, // Do not re-enable users enabled in Entra.
+                true   // Suspend unlinked accounts.
+            );
+
+            $this->assertEquals(0, $reenabled);
+            $this->assertEquals(1, $suspended, 'Only the not-yet-suspended orphan should be counted.');
+            $this->assertEquals(0, $deleted);
+
+            $this->assertEquals(
+                1,
+                $DB->get_field('user', 'suspended', ['id' => $deletedorphan->id]),
+                'Unlinked oidc account missing from Entra should be suspended.'
+            );
+            $this->assertEquals(
+                0,
+                $DB->get_field('user', 'suspended', ['id' => $liveorphan->id]),
+                'Unlinked oidc account still present and enabled in Entra should be left alone.'
+            );
+            $this->assertEquals(
+                0,
+                $DB->get_field('user', 'suspended', ['id' => $manualuser->id]),
+                'Non-oidc account should never be touched.'
+            );
+            $this->assertEquals(
+                1,
+                $DB->get_field('user', 'suspended', ['id' => $suspendedorphan->id]),
+                'Already-suspended orphan stays suspended and is not re-counted.'
+            );
+        } finally {
+            $usersync->drop_entra_users_temp_table($temptablename);
+        }
+    }
+
+    /**
+     * Test the guards on 'suspendnolink': it does nothing when the option is off, skips guest-style usernames, and
+     * only suspends matched-but-disabled accounts when 'disabledsyncsuspend' is on.
+     *
+     * @covers \local_o365\feature\usersync\main::process_user_status_from_temp_table
+     * @covers \local_o365\feature\usersync\main::suspend_unlinked_users_from_temp_table
+     */
+    public function test_process_user_status_suspend_unlinked_guards(): void {
+        global $DB;
+
+        set_config('bindingusernameclaim', 'upn', 'auth_oidc');
+
+        $generator = $this->getDataGenerator();
+        $orphan = $generator->create_user(['auth' => 'oidc', 'suspended' => 0]);
+        $guestorphan = $generator->create_user(['auth' => 'oidc', 'suspended' => 0, 'username' => 'guest_ext_1']);
+        $disabledorphan = $generator->create_user(['auth' => 'oidc', 'suspended' => 0]);
+
+        $usersync = new main();
+
+        // Option off - nothing happens even though the orphan is missing from Entra.
+        $temptablename = $usersync->create_entra_users_temp_table();
+        try {
+            $DB->insert_records($temptablename, [
+                (object) ['objectid' => 'obj-x', 'accountenabled' => 1, 'bindingvalue' => 'someone-else'],
+            ]);
+            $usersync->process_user_status_from_temp_table($temptablename, false, true, false, false, false, false);
+            $this->assertEquals(
+                0,
+                $DB->get_field('user', 'suspended', ['id' => $orphan->id]),
+                'Nothing should happen while suspendnolink is off.'
+            );
+        } finally {
+            $usersync->drop_entra_users_temp_table($temptablename);
+        }
+
+        // Option on: guest-style username is skipped; disabled match only suspended with disabledsyncsuspend.
+        $temptablename = $usersync->create_entra_users_temp_table();
+        try {
+            $DB->insert_records($temptablename, [
+                (object) ['objectid' => 'obj-disabled', 'accountenabled' => 0, 'bindingvalue' => $disabledorphan->username],
+                (object) ['objectid' => 'obj-guest', 'accountenabled' => 0, 'bindingvalue' => 'guest_ext_1'],
+            ]);
+            [, $suspended] = $usersync->process_user_status_from_temp_table(
+                $temptablename,
+                false,
+                true,
+                false,
+                true,
+                false,
+                true
+            );
+
+            $this->assertEquals(2, $suspended);
+            $this->assertEquals(
+                1,
+                $DB->get_field('user', 'suspended', ['id' => $orphan->id]),
+                'Orphan missing from Entra should be suspended.'
+            );
+            $this->assertEquals(
+                1,
+                $DB->get_field('user', 'suspended', ['id' => $disabledorphan->id]),
+                'Orphan disabled in Entra should be suspended when disabledsyncsuspend is on.'
+            );
+            $this->assertEquals(
+                0,
+                $DB->get_field('user', 'suspended', ['id' => $guestorphan->id]),
+                'Guest-style username should be skipped.'
+            );
+        } finally {
+            $usersync->drop_entra_users_temp_table($temptablename);
+        }
+    }
+
+    /**
+     * Test that 'suspendnolink' does nothing when the binding username claim is "auto" (its effective claim is decided
+     * per login and can differ between users, so the Moodle username cannot be reliably matched to one Entra account).
+     *
+     * @covers \local_o365\feature\usersync\main::suspend_unlinked_users_from_temp_table
+     * @covers \local_o365\feature\usersync\main::get_binding_graph_field
+     */
+    public function test_process_user_status_suspend_unlinked_requires_specific_claim(): void {
+        global $DB;
+
+        set_config('bindingusernameclaim', 'auto', 'auth_oidc');
+
+        $orphan = $this->getDataGenerator()->create_user(['auth' => 'oidc', 'suspended' => 0]);
+
+        $usersync = new main();
+        $temptablename = $usersync->create_entra_users_temp_table();
+        try {
+            $DB->insert_records($temptablename, [
+                (object) ['objectid' => 'obj-x', 'accountenabled' => 1, 'bindingvalue' => 'someone-else'],
+            ]);
+            [, $suspended] = $usersync->process_user_status_from_temp_table(
+                $temptablename,
+                false,
+                true,
+                false,
+                false,
+                false,
+                true
+            );
+
+            $this->assertEquals(0, $suspended);
+            $this->assertEquals(
+                0,
+                $DB->get_field('user', 'suspended', ['id' => $orphan->id]),
+                'Unlinked matching must not run when the binding claim is "auto".'
+            );
+        } finally {
+            $usersync->drop_entra_users_temp_table($temptablename);
+        }
+    }
+
+    /**
+     * Test that 'groupsyncsuspend' suspends an enabled user present in Entra but not in the user sync group, leaves
+     * in-group users alone, and does not re-enable a suspended user who is still not in the group.
+     *
+     * @covers \local_o365\feature\usersync\main::process_user_status_from_temp_table
+     */
+    public function test_process_user_status_groupsyncsuspend(): void {
+        global $DB;
+
+        $ingroupuser = $this->getDataGenerator()->create_user(['auth' => 'oidc', 'suspended' => 0]);
+        $outsideuser = $this->getDataGenerator()->create_user(['auth' => 'oidc', 'suspended' => 0]);
+        $outsidesuspendeduser = $this->getDataGenerator()->create_user(['auth' => 'oidc', 'suspended' => 1]);
+
+        $users = ['ingroup' => $ingroupuser, 'outside' => $outsideuser, 'outsidesuspended' => $outsidesuspendeduser];
+        foreach ($users as $key => $user) {
+            $DB->insert_record('local_o365_objects', (object) [
+                'type' => 'user',
+                'moodleid' => $user->id,
+                'objectid' => 'entra-user-' . $key,
+                'o365name' => $user->email,
+                'timecreated' => time(),
+                'timemodified' => time(),
+            ]);
+        }
+
+        $usersync = new main();
+        $temptablename = $usersync->create_entra_users_temp_table();
+
+        try {
+            $DB->insert_records($temptablename, [
+                (object) ['objectid' => 'entra-user-ingroup', 'accountenabled' => 1, 'ingroup' => 1],
+                (object) ['objectid' => 'entra-user-outside', 'accountenabled' => 1, 'ingroup' => 0],
+                (object) ['objectid' => 'entra-user-outsidesuspended', 'accountenabled' => 1, 'ingroup' => 0],
+            ]);
+
+            [$reenabled, $suspended, $deleted] = $usersync->process_user_status_from_temp_table(
+                $temptablename,
+                true, // Re-enable users reappearing in Entra (must still be blocked for out-of-group users).
+                false,
+                false,
+                false,
+                false,
+                false,
+                true // Suspend users not in the user sync group.
+            );
+
+            $this->assertEquals(0, $reenabled);
+            $this->assertEquals(1, $suspended);
+            $this->assertEquals(0, $deleted);
+            $this->assertEquals(0, $DB->get_field('user', 'suspended', ['id' => $ingroupuser->id]));
+            $this->assertEquals(1, $DB->get_field('user', 'suspended', ['id' => $outsideuser->id]));
+            $this->assertEquals(1, $DB->get_field('user', 'suspended', ['id' => $outsidesuspendeduser->id]));
+
+            // Without the option, the out-of-group suspended user is re-enabled as usual.
+            [$reenabled] = $usersync->process_user_status_from_temp_table($temptablename, true, false, false, false, false);
+            $this->assertEquals(2, $reenabled);
+        } finally {
+            $usersync->drop_entra_users_temp_table($temptablename);
+        }
+    }
+
+    /**
+     * Test that mark_group_members_in_temp_table() flags only group members and owners as in the group, and returns false
+     * without touching the temp table when no group filter is set, the API throws, or the group has no members.
+     *
+     * @covers \local_o365\feature\usersync\main::mark_group_members_in_temp_table
+     */
+    public function test_mark_group_members_in_temp_table(): void {
+        global $DB;
+
+        $apiclient = new class {
+            /**
+             * Group member batches passed to the callback.
+             *
+             * @var array
+             */
+            public array $batches = [];
+
+            /**
+             * Whether to throw an exception instead of returning members.
+             *
+             * @var bool
+             */
+            public bool $throw = false;
+
+            /**
+             * Group ID the helper requested, and the fields it asked for.
+             *
+             * @var array
+             */
+            public array $requested = [];
+
+            /**
+             * Emit the configured member batches.
+             *
+             * @param string $groupid Group object ID.
+             * @param callable $callback Batch callback.
+             * @param string|array $params Requested user fields.
+             * @return int
+             */
+            public function process_group_members_batched(string $groupid, callable $callback, $params = 'default'): int {
+                $this->requested = [$groupid, $params];
+                if ($this->throw) {
+                    throw new \moodle_exception('generalexceptionmessage', 'error', '', 'API error');
+                }
+                $total = 0;
+                foreach ($this->batches as $batch) {
+                    $callback($batch);
+                    $total += count($batch);
+                }
+                return $total;
+            }
+        };
+
+        $usersync = new class ($apiclient) extends main {
+            /**
+             * Test API client.
+             *
+             * @var object
+             */
+            private object $testapiclient;
+
+            /**
+             * Constructor.
+             *
+             * @param object $apiclient Test API client.
+             */
+            public function __construct(object $apiclient) {
+                $this->testapiclient = $apiclient;
+            }
+
+            /**
+             * Return the test API client.
+             *
+             * @return object
+             */
+            public function construct_user_api() {
+                return $this->testapiclient;
+            }
+        };
+
+        $groupid = '11111111-1111-1111-1111-111111111111';
+        $temptablename = $usersync->create_entra_users_temp_table();
+
+        $getflags = function () use ($DB, $temptablename): array {
+            return $DB->get_records_menu($temptablename, [], 'objectid', 'objectid, ingroup');
+        };
+
+        try {
+            $DB->insert_records($temptablename, [
+                (object) ['objectid' => 'entra-member', 'accountenabled' => 1],
+                (object) ['objectid' => 'entra-owner', 'accountenabled' => 1],
+                (object) ['objectid' => 'entra-outside', 'accountenabled' => 1],
+            ]);
+            $allingroup = ['entra-member' => 1, 'entra-owner' => 1, 'entra-outside' => 1];
+            $this->assertEquals($allingroup, $getflags(), 'Users default to being flagged as in the group.');
+
+            // No group filter configured: returns false and leaves flags untouched.
+            set_config('usersyncgroupfilter', '', 'local_o365');
+            $apiclient->batches = [[['id' => 'entra-member']]];
+            $this->assertFalse($usersync->mark_group_members_in_temp_table($temptablename));
+            $this->assertEquals($allingroup, $getflags());
+            $this->assertEmpty($apiclient->requested, 'The API must not be called without a group filter.');
+
+            set_config('usersyncgroupfilter', $groupid, 'local_o365');
+
+            // API error: returns false and leaves flags untouched.
+            $apiclient->throw = true;
+            $this->assertFalse($usersync->mark_group_members_in_temp_table($temptablename));
+            $this->assertEquals($allingroup, $getflags());
+            $apiclient->throw = false;
+
+            // Empty group: returns false and leaves flags untouched, so nobody is suspended.
+            $apiclient->batches = [];
+            $this->assertFalse($usersync->mark_group_members_in_temp_table($temptablename));
+            $this->assertEquals($allingroup, $getflags());
+
+            // Members and owners across batches (ignoring entries without an ID) are flagged; everyone else is reset.
+            $apiclient->batches = [[['id' => 'entra-member'], ['name' => 'no id']], [['id' => 'entra-owner']]];
+            $this->assertTrue($usersync->mark_group_members_in_temp_table($temptablename));
+            $this->assertEquals(
+                ['entra-member' => 1, 'entra-owner' => 1, 'entra-outside' => 0],
+                $getflags()
+            );
+            $this->assertEquals([$groupid, ['id']], $apiclient->requested);
+
+            // A later run with a different membership resets previously flagged users.
+            $apiclient->batches = [[['id' => 'entra-owner']]];
+            $this->assertTrue($usersync->mark_group_members_in_temp_table($temptablename));
+            $this->assertEquals(
+                ['entra-member' => 0, 'entra-owner' => 1, 'entra-outside' => 0],
+                $getflags()
             );
         } finally {
             $usersync->drop_entra_users_temp_table($temptablename);
@@ -958,5 +1769,28 @@ final class usersync_test extends advanced_testcase {
         // A failed Graph lookup can return null. This must fail closed without a TypeError.
         $apiclient->usergroups = null;
         $this->assertFalse($usersync->check_usercreationrestriction_for_test(['id' => 'test-user']));
+    }
+
+    /**
+     * Test that is_enabled() correctly reflects whether the scheduled user sync task should run.
+     *
+     * @covers \local_o365\feature\usersync\main::is_enabled
+     */
+    public function test_is_enabled(): void {
+        // No usersync config at all.
+        unset_config('usersync', 'local_o365');
+        $this->assertFalse(main::is_enabled());
+
+        // Only an on-login-only option is configured; the scheduled task has nothing to do.
+        set_config('usersync', 'photosynconlogin', 'local_o365');
+        $this->assertFalse(main::is_enabled());
+
+        // The 'match' option alone must enable the scheduled task, even without 'matchswitchauth'.
+        set_config('usersync', 'match', 'local_o365');
+        $this->assertTrue(main::is_enabled());
+
+        // A core option combined with an on-login-only option still enables the task.
+        set_config('usersync', 'photosynconlogin,create', 'local_o365');
+        $this->assertTrue(main::is_enabled());
     }
 }

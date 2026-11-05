@@ -58,6 +58,8 @@ class usersyncoptions extends admin_setting_configmulticheckbox {
             'reenable' => new \lang_string('settings_usersync_reenable', 'local_o365'),
             'disabledsyncsuspend' => new \lang_string('settings_usersync_disabledsyncsuspend', 'local_o365'),
             'disabledsyncreenable' => new \lang_string('settings_usersync_disabledsyncreenable', 'local_o365'),
+            'suspendnolink' => new \lang_string('settings_usersync_suspendnolink', 'local_o365'),
+            'groupsyncsuspend' => new \lang_string('settings_usersync_groupsyncsuspend', 'local_o365'),
             'match' => new \lang_string('settings_usersync_match', 'local_o365'),
             'matchswitchauth' => new \lang_string('settings_usersync_matchswitchauth', 'local_o365'),
             'appassign' => new \lang_string('settings_usersync_appassign', 'local_o365'),
@@ -104,7 +106,8 @@ class usersyncoptions extends admin_setting_configmulticheckbox {
                 ],
                 'suspension' => [
                         'title' => new \lang_string('settings_usersync_suspension', 'local_o365'),
-                        'options' => ['suspend', 'delete', 'reenable', 'disabledsyncsuspend', 'disabledsyncreenable'],
+                        'options' => ['suspend', 'delete', 'reenable', 'disabledsyncsuspend', 'disabledsyncreenable',
+                                'suspendnolink', 'groupsyncsuspend'],
                 ],
                 'matching' => [
                         'title' => new \lang_string('settings_usersync_matching', 'local_o365'),
@@ -120,7 +123,7 @@ class usersyncoptions extends admin_setting_configmulticheckbox {
                 ],
         ];
 
-        $dependents = ['delete', 'matchswitchauth'];
+        $dependents = ['delete', 'matchswitchauth', 'groupsyncsuspend'];
 
         $return = '<div class="form-multicheckbox">';
         $return .= '<input type="hidden" name="' . $this->get_full_name() . '[xxxxx]" value="1" />';
@@ -169,6 +172,10 @@ class usersyncoptions extends admin_setting_configmulticheckbox {
                 var deleteChk = document.getElementById("' . $this->get_id() . '_delete");
                 var matchChk = document.getElementById("' . $this->get_id() . '_match");
                 var matchswitchauthChk = document.getElementById("' . $this->get_id() . '_matchswitchauth");
+                var disabledsuspendChk = document.getElementById("' . $this->get_id() . '_disabledsyncsuspend");
+                var suspendnolinkChk = document.getElementById("' . $this->get_id() . '_suspendnolink");
+                var groupsyncsuspendChk = document.getElementById("' . $this->get_id() . '_groupsyncsuspend");
+                var groupfilterInput = document.getElementById("id_s_local_o365_usersyncgroupfilter");
 
                 function updateDependencies() {
                     if (deleteChk) {
@@ -183,10 +190,27 @@ class usersyncoptions extends admin_setting_configmulticheckbox {
                             matchswitchauthChk.checked = false;
                         }
                     }
+                    if (suspendnolinkChk) {
+                        var suspendparent = suspendChk.checked ||
+                            (disabledsuspendChk && disabledsuspendChk.checked);
+                        suspendnolinkChk.disabled = !suspendparent;
+                        if (!suspendparent && suspendnolinkChk.checked) {
+                            suspendnolinkChk.checked = false;
+                        }
+                    }
+                    if (groupsyncsuspendChk && groupfilterInput) {
+                        var hasgroupfilter = groupfilterInput.value.trim() !== "";
+                        groupsyncsuspendChk.disabled = !hasgroupfilter;
+                        if (!hasgroupfilter && groupsyncsuspendChk.checked) {
+                            groupsyncsuspendChk.checked = false;
+                        }
+                    }
                 }
 
+                if (groupfilterInput) groupfilterInput.addEventListener("input", updateDependencies);
                 if (suspendChk) suspendChk.addEventListener("change", updateDependencies);
                 if (matchChk) matchChk.addEventListener("change", updateDependencies);
+                if (disabledsuspendChk) disabledsuspendChk.addEventListener("change", updateDependencies);
                 updateDependencies();
             });
         </script>';
@@ -213,6 +237,11 @@ class usersyncoptions extends admin_setting_configmulticheckbox {
         // Option 'delete' can only be set if option 'suspend' is checked.
         if (!isset($data['suspend']) && isset($data['delete'])) {
             unset($data['delete']);
+        }
+
+        // Option 'suspendnolink' can only be set if 'suspend' or 'disabledsyncsuspend' is checked.
+        if (!isset($data['suspend']) && !isset($data['disabledsyncsuspend']) && isset($data['suspendnolink'])) {
+            unset($data['suspendnolink']);
         }
 
         // Option 'matchswitchauth' can only be set if option 'match' is checked.

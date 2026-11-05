@@ -100,6 +100,23 @@ $functions = [
             'capabilities' => 'moodle/site:config',
             'ajax' => true,
     ],
+    'local_o365_search_teams' => [
+            'classname' => '\local_o365\webservices\coursesync_search_teams',
+            'methodname' => 'search_teams',
+            'classpath' => 'local/o365/classes/webservices/coursesync_search_teams.php',
+            'description' => 'Search cached Teams for the team connection form',
+            'type' => 'read',
+            'capabilities' => 'moodle/site:config',
+            'ajax' => true,
+    ],
+    'local_o365_update_coursesync' => [
+        'classname' => '\local_o365\webservices\update_coursesync',
+        'methodname' => 'coursesync_update',
+        'classpath' => 'local/o365/classes/webservices/update_coursesync.php',
+        'description' => 'Enable or disable Teams sync for one or more courses.',
+        'type' => 'write',
+        'capabilities' => 'local/o365:managecoursesync',
+    ],
 ];
 
 // Pre-built service.
@@ -116,6 +133,8 @@ $services = [
             'local_o365_update_grade',
             'local_o365_search_groups',
             'local_o365_search_cohorts',
+            'local_o365_search_teams',
+            'local_o365_update_coursesync',
             'mod_assign_get_assignments',
             'mod_assign_get_grades',
             'mod_assign_save_grade',

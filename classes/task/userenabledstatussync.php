@@ -62,6 +62,8 @@ class userenabledstatussync extends scheduled_task {
         $dodelete = main::sync_option_enabled('delete');
         $dodisabledsyncsuspend = main::sync_option_enabled('disabledsyncsuspend');
         $dodisabledsyncreenable = main::sync_option_enabled('disabledsyncreenable');
+        $dosuspendunlinked = main::sync_option_enabled('suspendnolink');
+        $dogroupsyncsuspend = main::sync_option_enabled('groupsyncsuspend') && !empty((new main())->get_usersync_group_filter());
 
         $this->mtrace('Status sync options:');
         $this->mtrace('Suspend (deleted from Entra ID): ' . ($dosuspend ? 'enabled' : 'disabled'), 1);
@@ -69,6 +71,9 @@ class userenabledstatussync extends scheduled_task {
         $this->mtrace('Delete: ' . ($dodelete ? 'enabled' : 'disabled'), 1);
         $this->mtrace('Suspend (disabled in Entra ID): ' . ($dodisabledsyncsuspend ? 'enabled' : 'disabled'), 1);
         $this->mtrace('Re-enable (enabled in Entra ID): ' . ($dodisabledsyncreenable ? 'enabled' : 'disabled'), 1);
+        $this->mtrace('Suspend accounts with no stored Microsoft link: ' .
+            ($dosuspendunlinked ? 'enabled' : 'disabled'), 1);
+        $this->mtrace('Suspend (not in configured user sync group): ' . ($dogroupsyncsuspend ? 'enabled' : 'disabled'), 1);
     }
 
     /**
@@ -86,8 +91,13 @@ class userenabledstatussync extends scheduled_task {
         $dodelete = main::sync_option_enabled('delete');
         $dodisabledsyncsuspend = main::sync_option_enabled('disabledsyncsuspend');
         $dodisabledsyncreenable = main::sync_option_enabled('disabledsyncreenable');
+        $dosuspendunlinked = main::sync_option_enabled('suspendnolink');
+        $dogroupsyncsuspend = main::sync_option_enabled('groupsyncsuspend') && !empty((new main())->get_usersync_group_filter());
 
-        if (!$dosuspend && !$doreenable && !$dodisabledsyncsuspend && !$dodisabledsyncreenable) {
+        if (
+            !$dosuspend && !$doreenable && !$dodisabledsyncsuspend && !$dodisabledsyncreenable &&
+            !$dogroupsyncsuspend
+        ) {
             $this->mtrace('User suspension and re-enable disabled. Nothing to do.');
             return true;
         }
@@ -167,6 +177,11 @@ class userenabledstatussync extends scheduled_task {
             // Populate temp table by streaming from Entra API (no PHP array accumulation).
             $usersync->populate_entra_users_temp_table($temptablename);
 
+            if ($dogroupsyncsuspend && !$usersync->mark_group_members_in_temp_table($temptablename)) {
+                $this->mtrace('Could not retrieve any user sync group members. Group removal suspension skipped for safety.');
+                $dogroupsyncsuspend = false;
+            }
+
             // Process all status changes in a single pass to minimize memory overhead.
             [$totalreenabled, $totalsuspended, $totaldeleted] = $usersync->process_user_status_from_temp_table(
                 $temptablename,
@@ -174,7 +189,9 @@ class userenabledstatussync extends scheduled_task {
                 $dosuspend,
                 $dodelete,
                 $dodisabledsyncsuspend,
-                $dodisabledsyncreenable
+                $dodisabledsyncreenable,
+                $dosuspendunlinked,
+                $dogroupsyncsuspend
             );
 
             if ($totalreenabled > 0) {
